@@ -20,6 +20,8 @@ setuptools.setup(
          "matplotlib",
          "ipympl",
          "scipy",
-         "pandas"
+         "pandas",
+         "astropy",
+         "pathlib"
     ]
 )
