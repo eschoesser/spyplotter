@@ -2,11 +2,13 @@ from numpy.typing import ArrayLike
 import scipy.constants as const
 import numpy as np
 from matplotlib import pyplot as plt
+from .utils.logging import setup_log
+logger = setup_log(__name__)
 
 class Spectrum(object):
     
     def __init__(self, wavel: ArrayLike, fluxes: ArrayLike):
-              
+        logger.info('Using nm and Jy as units')
         self._l = wavel #Angstroms
         self._f = fluxes #for now unit-less normalized flux
         #self._parameters = parameters #dictionary of parameters describing spectrum
@@ -53,6 +55,9 @@ class ObservedSpectrum(Spectrum):
     
     def __init__():
         super(Spectrum, self).__init__()
+    
+    def from_csv():
+        pass
     
 class SimulatedSpectrum():
     """ToDo:
