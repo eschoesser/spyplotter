@@ -80,6 +80,10 @@ class Spectrum(object):
     @property
     def y_unit(self):
         return self._y.unit
+    
+    @property
+    def normalized(self):
+        return self._normalized
         
     @classmethod
     def from_powr(cls, filepath:str, keywords:List[int]=[''], dataset:int=1, xunit:u.Unit=u.AA,yunit:u.Unit=None):
