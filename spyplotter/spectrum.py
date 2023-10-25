@@ -24,17 +24,37 @@ class Spectrum(object):
         :param y_unit: flux unit of the spectrum, default is None = normalized spectrum
         :type y_unit: u.Unit, optional
         """
-        if x_unit == None:
-            logger.info('As no unit for x was specified, nm are assumed')
-            self._x = x * u.nanometer
+        #ToDo: dictionary of parameters, maybe a string with name of the spectrum
+        if type(x) == u.quantity.Quantity:
+            # if x has already unit, don't change it
+            logger.info(f'Keeping units of x: {x.unit}')
+            self._x = x
+        elif x_unit == None:
+            # if no unit is given, use nm
+            logger.info('As no unit for x was specified, Angstrom are assumed')
+            self._x = x * u.AA
         else:
+            # if unit is specified and x does not have unit, take specified unit
             self._x = x * x_unit
         
-        if y_unit == None:
+        if type(y) == u.quantity.Quantity:
+            # if y has already unit, don't change it
+            logger.info(f'Keeping units of y: {y.unit}')
+            self._y = y
+            
+            #if pre-specified unit is dimensionless, assume a normalized spectrum
+            if y.unit == u.dimensionless_unscaled:
+                self._normalized = True
+            else:
+                self.normalized = False
+                
+        elif y_unit == None:
+            #if y is not an astropy quantity and no unit was specified, assume a normalized spectrum
             logger.info('As no unit for y was given, a normalized spectrum is assumed')
             self._y = y * u.dimensionless_unscaled
             self._normalized = True
         else:
+            # if unit is specified and y does not have unit, take specified unit
             self._y = y * y_unit
             self._normalized = False
         
@@ -74,15 +94,15 @@ class Spectrum(object):
             return self._y.to(unit,equivalencies=u.spectral())
         
     @property
-    def x_unit(self):
+    def x_unit(self) -> u.Unit:
         return self._x.unit
     
     @property
-    def y_unit(self):
+    def y_unit(self) -> u.Unit:
         return self._y.unit
     
     @property
-    def normalized(self):
+    def normalized(self) -> bool:
         return self._normalized
         
     @classmethod
@@ -100,6 +120,9 @@ class Spectrum(object):
             elif (path / 'formal.plot').exists():
                 logger.info('Reading formal.plot')
                 x,y = readWRPlotDatasets(path / 'formal.plot',keywords,dataset)
+        else:
+            logger.error('Path does not exist')
+            raise ValueError
         
         if yunit is None:
             #search for signs of a flux calibrated spectrum, otherwise assume normalized spectrum
@@ -113,16 +136,30 @@ class Spectrum(object):
         return cls(x,y,xunit,yunit)
     
     @classmethod
-    def from_file(cls,filepath:str):
-        #todo: read from dat or csv file with np.loadtext or pandas
+    def from_cmfgen(cls,filepath:str):
+        #todo: write a function that imports from a CMFGEN output file a specific simulated Spectrum class
         pass
     
-    def convert(self,x_unit=None,y_unit=None):
-        #todo: write function that converts x or y to desired unit for whole class
+    def to_file(self,filename:str):
+        #todo: write a function that saves table of current spectrum in a csv file
+        #advanced todo: save also all parameters that were specified in header
         pass
-                
     
-    def plot(self,x_unit:u.Unit=None, y_unit:u.Unit=None, ax=None,**kwargs):
+    def convert_units(self,x_unit: u.Unit=None,y_unit: u.Unit =None):
+        
+        if (x_unit is None) and (y_unit is None):
+            logger.info('Specify which (x_unit or y_unit) should be converted and specify the desired unit using astropy.units')
+            pass
+        
+        if x_unit is not None:
+            logger.debug(f'The unit of all x values is changed to {x_unit}')
+            self._x = self._x.to(x_unit,equivalencies=u.spectral())
+            
+        if y_unit is not None:
+            logger.debug(f'The unit of all y values is changed to {y_unit}')
+            self._x = self._y.to(y_unit,equivalencies=u.spectral())
+     
+    def plot(self,x_unit:u.Unit=None, y_unit:u.Unit=None, interval:ArrayLike=None, ax=None,**kwargs):
         """Simple function to plot the spectrum
         The units can be changed for the plotting. However, 
         the units are only changed for the plot and not the whole class
@@ -168,12 +205,15 @@ class Spectrum(object):
         
         #Change labels of x axis dependent on unit type
         if x.unit.physical_type == u.m.physical_type:
+            logger.debug('wavelength like units used')
             #wavelength type unit
             ax.set_xlabel(r'$\lambda$' + f' [{x.unit:latex}]' )
         elif x.unit.physical_type == u.Hz.physical_type:
+            logger.debug('frequency like units used')
             #frequency type unit
             ax.set_xlabel(r'$\nu$' + f' [{x.unit:latex}]')
         elif x.unit.physical_type == u.J.physical_type:
+            logger.debug('energy like units used')
             #energy type unit
             ax.set_xlabel(r'$E$'+f' [{x.unit:latex}]')
         
@@ -182,5 +222,22 @@ class Spectrum(object):
             ax.set_ylabel(r'$\hat{n}$')
         else:
             ax.set_ylabel(f' Flux [{y.unit:latex}]')
+            
+        if interval is not None:
+            ax.set_xlim(interval[0],interval[1])
 
         return fig
+    
+    def zoom_plot(self,intervals:ArrayLike,fig_width=10,fig_height=4, x_unit:u.Unit=None, y_unit:u.Unit=None,**kwargs):
+        #ToDo: Add option for specifying multiple columns
+        
+        n_int = len(intervals)
+        
+        fig, ax = plt.subplots(n_int,1,figsize=(fig_width,fig_height*n_int))
+        
+        for i in range(n_int):
+            self.plot(x_unit, y_unit, interval=intervals[i],ax=ax[i],**kwargs)
+            
+        return fig
+    
+    
