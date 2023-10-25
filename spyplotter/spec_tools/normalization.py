@@ -1,0 +1,1 @@
+# Contains methods for normalization of a given spectrum

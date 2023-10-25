@@ -1,0 +1,1 @@
+# Contains all convolution methods (macroturbulence, rotation, instruments...)
