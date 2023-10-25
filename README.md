@@ -1,5 +1,5 @@
 # spyplotter
-<p align="center"> <img src='logo/spyplotter.png' width='300' </p>
+<p align="center"> <img src='logo/spyplotter.png' width='450' </p>
 
 This package inludes tools for quantitative spectroscopy. The aim is to simplify analyzing observed data, as well as plotting and analyzing the output of stellar atmosphere models as PoWR and CMFGEN. 
 
