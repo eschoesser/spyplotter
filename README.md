@@ -14,3 +14,5 @@ To install the package in development mode, enter the following statement within
 ```$pip install -e <path/to/spyplotter/>```
 
 In this way, if changes are made in the spyplotter package, the package does not need to be reinstalled after each change and can be tested immediately.
+
+Test add additional content.
