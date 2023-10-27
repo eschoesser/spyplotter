@@ -12,7 +12,7 @@ logger = setup_log(__name__)
 
 class Spectrum(object):
     
-    def __init__(self, x: ArrayLike, y: ArrayLike, x_unit:u.Unit=None, y_unit:u.Unit=None):
+    def __init__(self, x: ArrayLike, y: ArrayLike, x_unit:u.Unit=None, y_unit:u.Unit=None,name:str=None):
         """Generic class for a spectrum. The same class is used for observed and model spectra
 
         :param x: array of wavelength or frequency values
@@ -23,8 +23,11 @@ class Spectrum(object):
         :type x_unit: u.Unit, optional
         :param y_unit: flux unit of the spectrum, default is None = normalized spectrum
         :type y_unit: u.Unit, optional
+        :param name: optional name for the spectra, can be used for labelling them
+        :type name: string 
         """
-        #ToDo: dictionary of parameters, maybe a string with name of the spectrum
+        self.name = name
+        
         if type(x) == u.quantity.Quantity:
             # if x has already unit, don't change it
             logger.info(f'Keeping units of x: {x.unit}')
@@ -106,7 +109,7 @@ class Spectrum(object):
         return self._normalized
         
     @classmethod
-    def from_powr(cls, filepath:str, keywords:List[int]=[''], dataset:int=1, xunit:u.Unit=None,yunit:u.Unit=None):
+    def from_powr(cls, filepath, keywords:List[int]=[''], dataset:int=1, xunit:u.Unit=None,yunit:u.Unit=None,name=None):
         #ToDo: Check if all key words correspond to normalized or unnormalized spectrum
         
         path = Path(filepath)
@@ -133,10 +136,28 @@ class Spectrum(object):
                 logger.info('No flux unit specified and no signs for y units detected. Thus assuming normalized spectum.')
                 yunit = None
             
-        return cls(x,y,xunit,yunit)
+        return cls(x,y,xunit,yunit,name)
     
     @classmethod
-    def from_file(cls,filename:str, skiprows:int=0, delimiter:str=' ',xunit:u.Unit=None,yunit:u.Unit=None,**kwargs):
+    def from_file(cls,filename, skiprows:int=0, delimiter:str=' ',xunit:u.Unit=None,yunit:u.Unit=None,name:str=None,**kwargs):
+        """read spectrum from a file
+
+        :param filename: path and file name
+        :type filename: str
+        :param skiprows: number of rows that are skipped before spectrum is read, defaults to 0
+        :type skiprows: int, optional
+        :param delimiter: delimiter between values in table of file, defaults to whitespace ' '
+        :type delimiter: str, optional
+        :param xunit: astropy unit of x, defaults to None
+        :type xunit: u.Unit, optional
+        :param yunit: y unit, defaults to None
+        :type yunit: u.Unit, optional
+        :param name: name of spectrum, defaults to None
+        :type name: str, optional
+        :raises ValueError: if path of given file does not exist
+        :return: Spectrum object
+        :rtype: Spectrum
+        """
         path = Path(filename)
         if path.exists():
             data = np.loadtxt(filename, skiprows=skiprows,delimiter=delimiter,**kwargs)
@@ -144,11 +165,11 @@ class Spectrum(object):
             logger.error('Path does not exist')
             raise ValueError
         
-        return cls(data[:,0], data[:,1], xunit, yunit)
+        return cls(data[:,0], data[:,1], xunit, yunit,name)
         
     
     @classmethod
-    def from_cmfgen(cls,filepath:str):
+    def from_cmfgen(cls,filepath,name:str=None):
         #todo: write a function that imports from a CMFGEN output file a specific simulated Spectrum class
         pass
     
