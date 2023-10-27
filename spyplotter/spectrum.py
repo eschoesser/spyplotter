@@ -106,7 +106,7 @@ class Spectrum(object):
         return self._normalized
         
     @classmethod
-    def from_powr(cls, filepath:str, keywords:List[int]=[''], dataset:int=1, xunit:u.Unit=u.AA,yunit:u.Unit=None):
+    def from_powr(cls, filepath:str, keywords:List[int]=[''], dataset:int=1, xunit:u.Unit=None,yunit:u.Unit=None):
         #ToDo: Check if all key words correspond to normalized or unnormalized spectrum
         
         path = Path(filepath)
@@ -136,6 +136,18 @@ class Spectrum(object):
         return cls(x,y,xunit,yunit)
     
     @classmethod
+    def from_file(cls,filename:str, skiprows:int=0, delimiter:str=' ',xunit:u.Unit=None,yunit:u.Unit=None,**kwargs):
+        path = Path(filename)
+        if path.exists():
+            data = np.loadtxt(filename, skiprows=skiprows,delimiter=delimiter,**kwargs)
+        else:
+            logger.error('Path does not exist')
+            raise ValueError
+        
+        return cls(data[:,0], data[:,1], xunit, yunit)
+        
+    
+    @classmethod
     def from_cmfgen(cls,filepath:str):
         #todo: write a function that imports from a CMFGEN output file a specific simulated Spectrum class
         pass
@@ -160,13 +172,12 @@ class Spectrum(object):
             self._x = self._y.to(y_unit,equivalencies=u.spectral())
      
     def plot(self,x_unit:u.Unit=None, y_unit:u.Unit=None, interval:ArrayLike=None, ax=None,**kwargs):
-        """Simple function to plot the spectrum
+        """Function to plot the spectrum
         The units can be changed for the plotting. However, 
         the units are only changed for the plot and not the whole class
         
         If you would like to convert the units permanently, use the 
         convert_to() function.
-        
 
         :param x_unit: unit of x-values, defaults to None
         :type x_unit: u.Unit, optional
@@ -184,7 +195,7 @@ class Spectrum(object):
             x = self._x
         else:
             logger.debug(f'Using following new units:\n\tx: {x_unit}')
-            x = self._x.to(x_unit,equivalencies=u.spectral())
+            x = self._x.to(x_unit,equivalencies=u.spectral(),)
             
         if y_unit is None: 
             logger.debug(f'Using the following pre-specified units:\n\ty:{self._y.unit}')
