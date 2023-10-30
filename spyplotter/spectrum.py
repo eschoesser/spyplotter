@@ -63,18 +63,9 @@ class Spectrum(object):
             # if unit is specified and y does not have unit, take specified unit
             self._y = y * y_unit
             self._normalized = False
-            
-        if isinstance(vrad,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)):
-            self._vrad = vrad
-            logger.debug(f'Applying radial velocity shift to spectrum of {vrad}')
-            self._x = self._x.with_radial_velocity_shift(vrad)
-        elif isinstance(vrad,float):
-            self._vrad = vrad
-            logger.info('No unit of vrad specified, thus using km/s.')
-            self._x = self._x.with_radial_velocity_shift(vrad * u.km / u.s)
-        else:
-            logger.error('Not known format for vrad used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity')
-            raise ValueError
+        
+        v = self.check_velocity_unit(vrad)
+        self._x = self._x.with_radial_velocity_shift(v)
     
     def __call__(self):
         # ToDo: when called at a specific x point, use spline or interpolation to evaluate flux at given point?
@@ -208,6 +199,32 @@ class Spectrum(object):
         if y_unit is not None:
             logger.debug(f'The unit of all y values is changed to {y_unit}')
             self._x = self._y.to(y_unit,equivalencies=u.spectral())
+            
+    def check_velocity_unit(self,v):
+        
+        if isinstance(v,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)):
+            logger.debug(f'Use given velocity unit: {v.unit}')
+            return v
+            
+        elif isinstance(v,(float,int)):
+            logger.info('No unit for vrad specified. Thus assuming km/s.')
+            return v * u.km / u.s
+        else:
+            logger.error('Not known format for vrad used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity')
+            raise ValueError
+        
+    def doppler_shifted_x(self,vrad):
+                
+        #Check and set units of vrad
+        v = self.check_velocity_unit(vrad)
+        
+        new_vrad = self._vrad + vrad
+        
+        #warn if spectrum was shifted before
+        if self.vrad.value != 0:
+            logger.warning(f'Spectrum was already shifted using vrad={self.vrad}. \nNow total shift of spectrum: vradtot = {self.vrad + vrad}')
+        
+        return self._x.with_radial_velocity_shift(new_vrad)
     
     def apply_shift_vrad(self,vrad,overwrite=True):
         """Apply radial shift to spectrum, overwrites current spectrum
@@ -216,26 +233,36 @@ class Spectrum(object):
         :type vrad: float or astropy classes Quantity, SpectralCoord or SpectralQuantity
         :raises ValueError: if vrad has not one of required formats
         """
-        if isinstance(vrad,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)):
-            logger.debug(f'Total shift: {self._vrad} (before) + {vrad} (after) = {self._vrad + vrad}')
-            new_vrad = self._vrad + vrad
-        elif isinstance(vrad,(float,int)):
-            logger.info('No unit for vrad specified. Thus assuming km/s.')
-            vrad = vrad * u.km / u.s
-            logger.debug(f'Total shift: {self._vrad} (before) + {vrad} (after) = {self._vrad + vrad}')
-            new_vrad = self._vrad + vrad
-        else:
-            logger.error('Not known format for vrad used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity')
-            raise ValueError
         
         if overwrite:
             #Overwrite spectrum 
             logger.debug('Overwrite spectrum when applying velocity shift')
-            self._x = self._x.with_radial_velocity_shift(vrad)
-            self._vrad = new_vrad
+            
+            self._x = self.doppler_shifted_x(vrad)
+            self._vrad = vrad + self.vrad
+            
+            return self._x
         else:
-            logger.debug('Return new object with shiftet x-values')
+            
+            #Return new object of spectrum
+            logger.debug('Return new object with shifted x-values')
+            
+            #check and set velocity unit
+            v = self.check_velocity_unit(vrad)
+            
+            new_vrad = self._vrad + v
+            
             return Spectrum(self.x,self.y,self.x_unit,self.y_unit,self.name,new_vrad)
+    
+    def to_velocity_space(self,x_rest,doppler_convention='optical',v_unit=u.km/u.s,vrad=0. * u.km/u.s):
+            
+        if isinstance(x_rest,(float,int)):
+            x_rest = x_rest * u.AA
+            logger.info('No units for vrad specified. Thus using Angstrom')
+            
+        
+            
+        return self._x.to(v_unit,doppler_convention=doppler_convention,doppler_rest=x_rest)
         
     
     def plot(self,x_unit:u.Unit=None, y_unit:u.Unit=None, interval:ArrayLike=None, ax=None,fig_width=10,fig_height=4,**kwargs):
