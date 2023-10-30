@@ -65,6 +65,7 @@ class Spectrum(object):
             self._normalized = False
         
         v = self.check_velocity_unit(vrad)
+        self._vrad = v
         self._x = self._x.with_radial_velocity_shift(v)
     
     def __call__(self):
@@ -218,10 +219,10 @@ class Spectrum(object):
         #Check and set units of vrad
         v = self.check_velocity_unit(vrad)
         
-        new_vrad = self._vrad + vrad
+        new_vrad = self._vrad + v
         
         #warn if spectrum was shifted before
-        if self.vrad.value != 0:
+        if self.vrad != 0:
             logger.warning(f'Spectrum was already shifted using vrad={self.vrad}. \nNow total shift of spectrum: vradtot = {self.vrad + vrad}')
         
         return self._x.with_radial_velocity_shift(new_vrad)
@@ -255,14 +256,54 @@ class Spectrum(object):
             return Spectrum(self.x,self.y,self.x_unit,self.y_unit,self.name,new_vrad)
     
     def to_velocity_space(self,x_rest,doppler_convention='optical',v_unit=u.km/u.s,vrad=0. * u.km/u.s):
+        
+        if vrad != 0:
+            x = self.doppler_shifted_x(vrad)
+        else:
+            x = self._x
             
         if isinstance(x_rest,(float,int)):
             x_rest = x_rest * u.AA
             logger.info('No units for vrad specified. Thus using Angstrom')
             
+        return x.to(v_unit,doppler_convention=doppler_convention,doppler_rest=x_rest)
+    
+    def plot_velocity(self, x_rest, doppler_convention='optical', v_unit=u.km/u.s, vrad=0. * u.km/u.s,
+                      ax=None, fig_width=10, fig_height=4, y_unit:u.Unit=None, interval:ArrayLike=None, **kwargs):
         
+        v = self.to_velocity_space(x_rest=x_rest,doppler_convention=doppler_convention,v_unit=v_unit,vrad=vrad)
+        
+        if ax is None:
             
-        return self._x.to(v_unit,doppler_convention=doppler_convention,doppler_rest=x_rest)
+            fig, ax = plt.subplots(figsize=(fig_width,fig_height))
+
+        else:
+
+            fig = ax.get_figure()
+        
+        #changing y unit if specified
+        if y_unit is None: 
+            logger.debug(f'Using the following pre-specified units:\n\ty:{self._y.unit}')
+            y = self._y
+        else:
+            logger.debug(f'Using following new units:\n\ty: {y_unit}')
+            y = self._y.to(y_unit,equivalencies=u.spectral())
+        
+        ax.plot(v,self._y,**kwargs)
+        
+        #Set label of x axis
+        ax.set_xlabel(r'$v$' + f' [{v.unit:latex}]')
+        
+        #Change labels of y axis if it is a normalized spectrum
+        if self._normalized:
+            ax.set_ylabel(r'$\hat{n}$')
+        else:
+            ax.set_ylabel(f'Flux [{y.unit:latex}]')
+            
+        if interval is not None:
+            ax.set_xlim(interval[0],interval[1])
+        
+        return fig
         
     
     def plot(self,x_unit:u.Unit=None, y_unit:u.Unit=None, interval:ArrayLike=None, ax=None,fig_width=10,fig_height=4,**kwargs):
