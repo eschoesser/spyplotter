@@ -7,6 +7,7 @@ from astropy import units as u
 from astropy.coordinates import SpectralCoord, SpectralQuantity
 from pathlib import Path
 
+from .line_identification import LineIdentifier
 from .powr import readWRPlotDatasets
 from .utils.logging import setup_log
 from .spec_tools.unit_checks import check_velocity_unit, check_x_unit,doppler_shifted_x
@@ -14,7 +15,7 @@ logger = setup_log(__name__)
 
 class Spectrum(object):
     
-    def __init__(self, x: ArrayLike, y: ArrayLike, x_unit:u.Unit=None, y_unit:u.Unit=None,name:str=None,vrad=0 * u.km / u.s):
+    def __init__(self, x: ArrayLike, y: ArrayLike, x_unit:u.Unit=None, y_unit:u.Unit=None,name:str=None,vrad=0 * u.km / u.s,line_identifier:LineIdentifier=None):
         """Generic class for a spectrum. The same class is used for observed and model spectra
 
         :param x: array of wavelength or frequency values (if they have unit, keep unit)
@@ -31,7 +32,6 @@ class Spectrum(object):
         :type vrad: float, SpectralCoord, SpectralQuantity or u.quantity.Quantity
         """
         self.name = name
-        
         if isinstance(x,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)):
             # if x has already unit, don't change it
             logger.info(f'Keeping units of x: {x.unit}')
@@ -68,6 +68,7 @@ class Spectrum(object):
         v = check_velocity_unit(vrad)
         self._vrad = v
         self._x = self._x.with_radial_velocity_shift(v)
+        self._line_identifier = line_identifier
     
     def __call__(self):
         # ToDo: when called at a specific x point, use spline or interpolation to evaluate flux at given point?
@@ -118,6 +119,16 @@ class Spectrum(object):
     @property
     def vrad(self):
         return self._vrad
+    
+    @property
+    def line_identifier(self):
+        if self._line_identifier is None:
+            logger.warning('Line Identifier was not defined yet')
+        return self._line_identifier
+        
+    @line_identifier.setter
+    def line_identifier(self,line_identifier:LineIdentifier):
+        self._line_identifier = line_identifier
         
     @classmethod
     def from_powr(cls, filepath, keywords:List[int]=[''], dataset:int=1, xunit:u.Unit=None,yunit:u.Unit=None,name=None,vrad=0. * u.km/u.s):
