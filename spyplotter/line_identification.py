@@ -4,20 +4,28 @@ import matplotlib.pyplot as plt
 from astropy import units as u
 from astropy.coordinates import SpectralCoord, SpectralQuantity
 
+from .powr import readWRPlot_identfile,wrplot_to_tex
 from .utils.logging import setup_log
 logger = setup_log(__name__)
 
 class LineIdentifier:
     #TODO: add units, possibility for unit adaptions,make sure it works even if entries of dict_lines have different units
-    #TODO: read wrplot ident files
-    def __init__(self, dict_lines,x_unit:u.Unit=None):
+    def __init__(self, dict_lines,font_dict_list=None,x_unit:u.Unit=None):
         have_all_units = all(isinstance(value, (u.quantity.Quantity,SpectralCoord,SpectralQuantity)) for value in dict_lines.values())
         
         self.dict_lines = dict_lines
         
-    def from_powr_identfile(self,filename):
-        with open(filename, 'r') as file:
-            pass
+        if font_dict_list is not None:
+            assert len(dict_lines) == len(font_dict_list), "Number of entries in the line dictionary is not same as  length of the text kwargs."
+        
+        self.font_dict_list = font_dict_list
+        
+    @classmethod
+    def from_powr_identfile(cls,filename,keyword='',x_unit:u.Unit=None):
+        dict_lines, font_dict_list = readWRPlot_identfile(filepath=filename,keyword=keyword)
+        print(dict_lines, font_dict_list)
+        print(len(dict_lines), len(font_dict_list))
+        return cls(dict_lines, font_dict_list,x_unit=x_unit)
         
     def plot(self,
              base_yoff=1.02,
@@ -45,7 +53,6 @@ class LineIdentifier:
             stem              : the length of the "stem", the line which points to the label NAME (spectral line id)
             text_yoff         : text y offset relative to the top of the stem
             line_kwargs       : dictionary for customizing vlines and hlines
-            text_kwargs       : dictionary for customizing plotted text
 
         """
         if ax is None:
@@ -90,6 +97,11 @@ class LineIdentifier:
         #print text labels
         line_labels = list(self.dict_lines.keys())
         for i, x in enumerate(stem_lamb):
-            ax.text(x,y,s=line_labels[i],**text_kwargs)
+            if self.font_dict_list is None:
+                ax.text(x,y,s=line_labels[i],fontdict=text_kwargs)
+            else:
+                font_dict = text_kwargs.copy()
+                font_dict.update(self.font_dict_list[i])
+                ax.text(x,y,s=line_labels[i],fontdict=font_dict)
                     
         return ax
