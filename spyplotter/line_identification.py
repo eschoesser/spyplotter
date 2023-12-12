@@ -11,24 +11,26 @@ from .powr import wrplot_to_tex
 from .utils.logging import setup_log
 logger = setup_log(__name__)
 
+from .spec_tools.unit_checks import check_velocity_unit,doppler_shifted_x
+
 class SpectralLine:
-    def __init__(self, ion_name, wavelengths, plotting_style_dict={},x_unit=u.AA):
+    def __init__(self, ion_name, wavelengths, plotting_style_dict={},x_unit=u.AA,vrad=0 * u.km / u.s):
         self.ion_name = ion_name
         
         self.x_unit=x_unit
+        v = check_velocity_unit(vrad)
+        self._vrad = v
         
         #Check how nested wavelength array is
         #Make sure self._wavelengths is list of lists
         if isinstance(wavelengths,(int, float)):
-            self._wavelengths = [[SpectralCoord(wavelengths, unit=x_unit)]]
+            self._wavelengths = [[SpectralCoord(wavelengths, unit=x_unit).with_radial_velocity_shift(v)]]
         elif isinstance(wavelengths[0],(int, float)):
-            self._wavelengths = [[SpectralCoord(wavelength, unit=x_unit) for wavelength in wavelengths]]
+            self._wavelengths = [[SpectralCoord(wavelength, unit=x_unit).with_radial_velocity_shift(v) for wavelength in wavelengths]]
         elif isinstance(wavelengths[0], (list, tuple, np.ndarray)):
-            self._wavelengths = [[SpectralCoord(wavelength, unit=x_unit) for wavelength in sublist] for sublist in wavelengths]
+            self._wavelengths = [[SpectralCoord(wavelength, unit=x_unit).with_radial_velocity_shift(v) for wavelength in sublist] for sublist in wavelengths]
         else:
             logger.error('wavelengths have wrong type. Make sure that it is a list/ tuple/ array like of floats.')
-            
-        self._wavelengths_vals = [[float(wavelength.value) for wavelength in sublist] for sublist in self._wavelengths]
         
         self.plotting_style = plotting_style_dict
     
@@ -38,7 +40,11 @@ class SpectralLine:
     
     @property
     def wavelengths_vals(self):
-        return self._wavelengths_vals
+        return [[float(wavelength.value) for wavelength in sublist] for sublist in self._wavelengths]
+    
+    @property
+    def vrad(self):
+        return self._vrad
     
     def __add__(self, other):
         if not isinstance(other, SpectralLine):
@@ -67,30 +73,69 @@ class SpectralLine:
 
         return merged_spectral_line
     
+    def apply_shift_vrad(self,vrad,overwrite=False,new_spectral_line=False):
+        """Apply radial shift to spectrum, choose if spectrum is overwritten or new spectrum is returned
+
+        :param vrad: radial velocity
+        :type vrad: float or astropy classes Quantity, SpectralCoord or SpectralQuantity
+        :raises ValueError: if vrad has not one of required formats
+        """
+        #warn if spectrum was shifted before
+        if self.vrad != 0:
+            logger.warning(f'Spectrum was already shifted using vrad={self.vrad}. \nNow total shift of spectrum: vradtot = {self.vrad + vrad}')
+        
+        if overwrite:
+            #Overwrite spectrum 
+            logger.debug('Overwrite spectrum when applying velocity shift')
+            self._vrad = vrad + self.vrad
+            self._wavelengths = [[doppler_shifted_x(wavelength,vrad) for wavelength in sublist] for sublist in self._wavelengths]
+            
+            
+            return self._wavelengths
+       
+        elif new_spectral_line:
+            
+            #Return new object of spectrum
+            logger.debug('Return new object with shifted x-values')
+            
+            #check and set velocity unit
+            v = check_velocity_unit(vrad)
+            
+            new_vrad = self._vrad + v
+            return SpectralLine(self.ion_name,self.wavelengths_vals,self.x_unit,new_vrad)
+        
+        else:
+            return [[doppler_shifted_x(wavelength,vrad) for wavelength in sublist] for sublist in self._wavelengths]
+    
     def convert_unit_to(self,new_unit):
         self._wavelengths = [[wavelength.to(new_unit) for wavelength in sublist] for sublist in self._wavelengths]
-        self._wavelengths_vals = [[float(wavelength.value) for wavelength in sublist] for sublist in self._wavelengths]
 
     def __str__(self):
-        return f"SpectralLine({self.ion_name}:\n\t{self._wavelengths_vals},\n\t{self.plotting_style})"
+        return f"SpectralLine({self.ion_name}:\n\t{self.wavelengths_vals},\n\t{self.plotting_style})"
 
     def to_dict(self):
         return {self.ion_name: 
             {
-            'wavelengths': self._wavelengths_vals,
+            'wavelengths': self.wavelengths_vals,
             'plotting_style': self.plotting_style
             }
         }
 
 class LineIdentifier():
     #TODO: add units, possibility for unit adaptions,make sure it works even if entries of dict_lines have different units
-    def __init__(self, spectral_lines={},x_unit=u.AA):
+    def __init__(self, spectral_lines={},x_unit=u.AA,vrad=0*u.km/u.s):
         #have_all_units = all(isinstance(value, (u.quantity.Quantity,SpectralCoord,SpectralQuantity)) for value in dict_lines.values())
         
         super(LineIdentifier, self).__init__()
         
         self._spectral_lines = spectral_lines
         self._x_unit = x_unit
+        
+        v = check_velocity_unit(vrad)
+        self._vrad = v
+        if self._vrad.value != 0:
+            self.apply_shift_vrad(self._vrad)
+            
         
     def __str__(self):
         str_dict = self.to_dict()
@@ -123,6 +168,10 @@ class LineIdentifier():
         #flattened list of all wavelengths for all ions
         return [item for sublist in self.wavelengths for subsublist in sublist for item in subsublist]
     
+    @property
+    def vrad(self):
+        return self._vrad
+    
     def update_plotting_style(self, ion_name, new_plotting_style):
         if ion_name in self._spectral_lines:
             self._spectral_lines[ion_name].plotting_style = new_plotting_style
@@ -152,6 +201,25 @@ class LineIdentifier():
         self._x_unit = new_unit
         for ion_name, spectral_line in self._spectral_lines.items():
             spectral_line.convert_unit_to(new_unit)
+            
+    def apply_shift_vrad(self,vrad):
+        """Apply radial shift to spectrum, choose if spectrum is overwritten or new spectrum is returned
+
+        :param vrad: radial velocity
+        :type vrad: float or astropy classes Quantity, SpectralCoord or SpectralQuantity
+        :raises ValueError: if vrad has not one of required formats
+        """
+        #warn if spectrum was shifted before
+        if self.vrad != 0:
+            logger.warning(f'LineIdentifier was already shifted using vrad={self.vrad}. \nNow total shift of spectrum: vradtot = {self.vrad + vrad}')
+        
+        #Overwrite spectrum 
+        logger.debug('Overwrite LineIdentifier when applying velocity shift')
+        self._vrad = vrad + self.vrad
+        for ion_name, spectral_line in self._spectral_lines.items():
+            spectral_line.apply_shift_vrad(vrad,overwrite=True)
+        
+        return self.wavelengths
 
     @classmethod
     def from_yaml(cls, file_path,x_unit=u.AA):
