@@ -1,1 +1,1 @@
-from .helper_functions import generate_intervals
+from .plotting_functions import generate_intervals

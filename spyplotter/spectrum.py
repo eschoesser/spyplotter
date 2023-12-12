@@ -7,13 +7,15 @@ from astropy import units as u
 from astropy.coordinates import SpectralCoord, SpectralQuantity
 from pathlib import Path
 
+from .line_identification import LineIdentifier
 from .powr import readWRPlotDatasets
 from .utils.logging import setup_log
+from .spec_tools.unit_checks import check_velocity_unit, check_x_unit,doppler_shifted_x
 logger = setup_log(__name__)
 
 class Spectrum(object):
     
-    def __init__(self, x: ArrayLike, y: ArrayLike, x_unit:u.Unit=None, y_unit:u.Unit=None,name:str=None,vrad=0 * u.km / u.s):
+    def __init__(self, x: ArrayLike, y: ArrayLike, x_unit:u.Unit=None, y_unit:u.Unit=None,name:str=None,vrad=0 * u.km / u.s,line_identifier:LineIdentifier=None):
         """Generic class for a spectrum. The same class is used for observed and model spectra
 
         :param x: array of wavelength or frequency values (if they have unit, keep unit)
@@ -30,7 +32,6 @@ class Spectrum(object):
         :type vrad: float, SpectralCoord, SpectralQuantity or u.quantity.Quantity
         """
         self.name = name
-        
         if isinstance(x,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)):
             # if x has already unit, don't change it
             logger.info(f'Keeping units of x: {x.unit}')
@@ -64,9 +65,10 @@ class Spectrum(object):
             self._y = y * y_unit
             self._normalized = False
         
-        v = self.check_velocity_unit(vrad)
+        v = check_velocity_unit(vrad)
         self._vrad = v
         self._x = self._x.with_radial_velocity_shift(v)
+        self._line_identifier = line_identifier
     
     def __call__(self):
         # ToDo: when called at a specific x point, use spline or interpolation to evaluate flux at given point?
@@ -117,10 +119,40 @@ class Spectrum(object):
     @property
     def vrad(self):
         return self._vrad
+    
+    @property
+    def line_identifier(self):
+        if self._line_identifier is None:
+            logger.warning('Line Identifier was not defined yet')
+        return self._line_identifier
+        
+    @line_identifier.setter
+    def line_identifier(self,line_identifier:LineIdentifier):
+        self._line_identifier = line_identifier
         
     @classmethod
     def from_powr(cls, filepath, keywords:List[int]=[''], dataset:int=1, xunit:u.Unit=None,yunit:u.Unit=None,name=None,vrad=0. * u.km/u.s):
-        #ToDo: Check if all key words correspond to normalized or unnormalized spectrum
+        """Read spectrum from a PoWR output file
+
+        :param filepath: path of file, if only path is given and not concrete file, try to open formal.plot
+                        Otherwise: open specified file
+        :type filepath: string or Path (file or directory)
+        :param keywords: list of keywords that are read after each other, defaults to ['']
+        :type keywords: List[int], optional
+        :param dataset: number of data set that is read, defaults to 1
+        :type dataset: int, optional
+        :param xunit: unit of x_values, defaults to None (later Angstrom)
+        :type xunit: u.Unit, optional
+        :param yunit: unit of y values, defaults to None (later normalized)
+        :type yunit: u.Unit, optional
+        :param name: name of spectrum, defaults to None
+        :type name: string, optional
+        :param vrad: radial velocity that should be applied to spectrum, defaults to 0.*u.km/u.s
+        :type vrad: float, SpectralCoord, SpectralQuantity or u.quantity.Quantity, optional
+        :raises ValueError: if path or formal.plot in directory does not exist
+        :return: Spectrum object
+        :rtype: Spectrum
+        """
         
         path = Path(filepath)
         
@@ -188,6 +220,13 @@ class Spectrum(object):
         pass
     
     def convert_units(self,x_unit: u.Unit=None,y_unit: u.Unit =None):
+        """Converts units and overwrites them in spectrum
+
+        :param x_unit: unit for x_values, defaults to None
+        :type x_unit: u.Unit, optional
+        :param y_unit: unit for y_values, defaults to None
+        :type y_unit: u.Unit, optional
+        """
         
         if (x_unit is None) and (y_unit is None):
             logger.info('Specify which (x_unit or y_unit) should be converted and specify the desired unit using astropy.units')
@@ -200,76 +239,97 @@ class Spectrum(object):
         if y_unit is not None:
             logger.debug(f'The unit of all y values is changed to {y_unit}')
             self._x = self._y.to(y_unit,equivalencies=u.spectral())
-            
-    def check_velocity_unit(self,v):
-        
-        if isinstance(v,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)):
-            logger.debug(f'Use given velocity unit: {v.unit}')
-            return v
-            
-        elif isinstance(v,(float,int)):
-            logger.info('No unit for vrad specified. Thus assuming km/s.')
-            return v * u.km / u.s
-        else:
-            logger.error('Not known format for vrad used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity')
-            raise ValueError
-        
-    def doppler_shifted_x(self,vrad):
-                
-        #Check and set units of vrad
-        v = self.check_velocity_unit(vrad)
-        
-        new_vrad = self._vrad + v
-        
-        #warn if spectrum was shifted before
-        if self.vrad != 0:
-            logger.warning(f'Spectrum was already shifted using vrad={self.vrad}. \nNow total shift of spectrum: vradtot = {self.vrad + vrad}')
-        
-        return self._x.with_radial_velocity_shift(new_vrad)
     
-    def apply_shift_vrad(self,vrad,overwrite=True):
-        """Apply radial shift to spectrum, overwrites current spectrum
+    def apply_shift_vrad(self,vrad,overwrite=False,new_spectrum=False):
+        """Apply radial shift to spectrum, choose if spectrum is overwritten or new spectrum is returned
 
         :param vrad: radial velocity
         :type vrad: float or astropy classes Quantity, SpectralCoord or SpectralQuantity
         :raises ValueError: if vrad has not one of required formats
         """
+        #warn if spectrum was shifted before
+        if self.vrad != 0:
+            logger.warning(f'Spectrum was already shifted using vrad={self.vrad}. \nNow total shift of spectrum: vradtot = {self.vrad + vrad}')
         
         if overwrite:
             #Overwrite spectrum 
             logger.debug('Overwrite spectrum when applying velocity shift')
-            
-            self._x = self.doppler_shifted_x(vrad)
             self._vrad = vrad + self.vrad
+            self._x = doppler_shifted_x(self.x,vrad)
             
             return self._x
-        else:
+       
+        elif new_spectrum:
             
             #Return new object of spectrum
             logger.debug('Return new object with shifted x-values')
             
             #check and set velocity unit
-            v = self.check_velocity_unit(vrad)
+            v = check_velocity_unit(vrad)
             
             new_vrad = self._vrad + v
             
             return Spectrum(self.x,self.y,self.x_unit,self.y_unit,self.name,new_vrad)
+        
+        else:
+            return doppler_shifted_x(self.x,vrad)
     
     def to_velocity_space(self,x_rest,doppler_convention='optical',v_unit=u.km/u.s,vrad=0. * u.km/u.s):
+        """Convert the x-values to velocity space, apply radial shift if specified
+
+        :param x_rest: Doppler rest value used for conversion of spectrum to velocity space
+        :type x_rest: float or astropyQuantity,SpectralCoord,SpectralQuantity
+        :param doppler_convention: Doppler convention, defaults to 'optical'
+        :type doppler_convention: str, optional
+        :param v_unit: velocity unit, defaults to u.km/u.s
+        :type v_unit: u.Unit, optional
+        :param vrad: radial velocity, defaults to 0.*u.km/u.s
+        :type vrad: float or astropyQuantity,SpectralCoord,SpectralQuantity, optional
+        :return: velocity values corresponding to spectrum and x_rest
+        :rtype: ArrayLike
+        """
         
         if vrad != 0:
-            x = self.doppler_shifted_x(vrad)
+            vrad = check_velocity_unit(vrad)
+            x = self.apply_shift_vrad(vrad,overwrite=False,new_spectrum=False)
         else:
             x = self._x
+        
+        x_rest = check_x_unit(x_rest)
             
-        if isinstance(x_rest,(float,int)):
-            x_rest = x_rest * u.AA
-            logger.info('No units for vrad specified. Thus using Angstrom')
-            
-        return x.to(v_unit,doppler_convention=doppler_convention,doppler_rest=x_rest)
+        return x.to(v_unit,doppler_convention=doppler_convention,doppler_rest=x_rest,)
     
     def plot_velocity(self, x_rest, doppler_convention='optical', v_unit=u.km/u.s, vrad=0. * u.km/u.s,
-                      ax=None, fig_width=10, fig_height=4, y_unit:u.Unit=None, interval:ArrayLike=None, **kwargs):
+                      ax=None, fig_width=10, fig_height=4, y_unit:u.Unit=None, interval:ArrayLike=None, 
+                      zero_vline=True,**kwargs):
+        """Convert the x-values of the spectrum to velocity space and plot the spectrum
+
+        :param x_rest: rest value, used to convert to velocity space
+        :type x_rest: float or astropyQuantity,SpectralCoord,SpectralQuantity
+        :param doppler_convention: Doppler convention, defaults to 'optical'
+        :type doppler_convention: str, optional
+        :param v_unit: velocity unit for plotting on x axis, defaults to u.km/u.s
+        :type v_unit: u.Unit, optional
+        :param vrad: radial velocity, defaults to 0.*u.km/u.s
+        :type vrad: float or astropyQuantity,SpectralCoord,SpectralQuantity, optional
+        :param ax: Axis of plot, defaults to None
+        :type ax: matplotlib axis, optional
+        :param fig_width: Figure width, defaults to 10
+        :type fig_width: int, optional
+        :param fig_height: Figure height, defaults to 4
+        :type fig_height: int, optional
+        :param y_unit: unit of y axis, defaults to None
+        :type y_unit: u.Unit, optional
+        :param interval: Interval for zoom on x-axis
+                        y-axis is zoomed accordingly (98%*y_min,102%*y_min), defaults to None
+        :type interval: ArrayLike, optional
+        :param zero_vline: decides if vertical line at zero is plotted, defaults to True
+        :type zero_vline: bool, optional
+        :raises ValueError: if interval has wrong type
+        :return: axis of plot
+        :rtype: matplotlib axis
+        """
+        #TODO: add idents 
         
         v = self.to_velocity_space(x_rest=x_rest,doppler_convention=doppler_convention,v_unit=v_unit,vrad=vrad)
         
@@ -289,6 +349,63 @@ class Spectrum(object):
             logger.debug(f'Using following new units:\n\ty: {y_unit}')
             y = self._y.to(y_unit,equivalencies=u.spectral())
         
+        # zoom into set x-region
+        if interval is not None:
+            #Check if interval has length 2
+            if len(interval) == 2:
+                # check if interval has items
+                if all(isinstance(item,(float,int)) for item in interval):
+                    logger.debug(f'Use same units as v_unit [{v_unit}]')
+                    x_min = interval[0] * v_unit
+                    x_max = interval[1] * v_unit
+                    ax.set_xlim(x_min.value,x_max.value)
+                    # Find indices within the specified x-interval
+                    indices = np.where((v >= x_min) & (v <= x_max))
+                    min_y = np.min(y[indices])
+                    max_y = np.max(y[indices])
+                    # zoom into corresponding v values
+                    ax.set_ylim(0.98*min_y.value,1.02*max_y.value)
+                elif all(isinstance(item,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)) for item in interval):
+                    
+                    if all(item.unit.is_equivalent(u.m/u.s) for item in interval):
+                        # if interval has also velocity units
+                        v_min = interval[0]
+                        v_max = interval[1]
+                        ax.set_xlim(v_min.value,v_max.value)
+                        # Find indices within the specified x-interval
+                        indices = np.where((v >= v_min) & (v <= v_max))
+                        min_y = np.min(y[indices])
+                        max_y = np.max(y[indices])
+                        # Zoom into corresponding v values
+                        ax.set_ylim(0.98*min_y.value,1.02*max_y.value)
+                        
+                    elif all(item.unit.is_equivalent(self.x_unit,equivalencies=u.spectral()) for item in interval):
+                        # if interval items have unit of wavelength, frequency or energy, convert them to vel space
+                        x_min = check_x_unit(interval[0])
+                        x_max = check_x_unit(interval[1])
+                        # convert to velocity space
+                        x_rest = check_x_unit(x_rest)
+                        v_min = x_min.to(v_unit,doppler_convention=doppler_convention,doppler_rest=x_rest)
+                        v_max = x_max.to(v_unit,doppler_convention=doppler_convention,doppler_rest=x_rest)
+                        # set x limit
+                        ax.set_xlim(v_min.value,v_max.value)
+                        # Find indices within the specified x-interval
+                        indices = np.where((v >= v_min) & (v <= v_max))
+                        min_y = np.min(y[indices])
+                        max_y = np.max(y[indices])
+                        # Zoom into corresponding v values
+                        ax.set_ylim(0.98*min_y.value,1.02*max_y.value)
+                    
+                    else:
+                        logger.error(f'Use velocity, wavelnegth, energy or frquency type units when specifying the interval')
+                        
+                else:
+                    logger.error(f'Interval has wrong type. Use ArrayLike of length 2 and float, int or a Quantity using astropy')
+                    raise ValueError
+            else:
+                logger.error(f'Interval has a length of {interval} which is unequal 2')
+                raise ValueError
+            
         ax.plot(v,self._y,**kwargs)
         
         #Set label of x axis
@@ -300,32 +417,35 @@ class Spectrum(object):
         else:
             ax.set_ylabel(f'Flux [{y.unit:latex}]')
             
-        if interval is not None:
-            ax.set_xlim(interval[0],interval[1])
+        if zero_vline:
+            ax.axvline(0,color='grey',ls='--')
         
-        return fig
+        return ax
         
     
     def plot(self,x_unit:u.Unit=None, y_unit:u.Unit=None, interval:ArrayLike=None, ax=None,fig_width=10,fig_height=4,**kwargs):
         """Function to plot the spectrum
         The units can be changed for the plotting. However, 
         the units are only changed for the plot and not the whole class
-        
-        If you would like to convert the units permanently, use the 
-        convert_to() function.
 
         :param x_unit: unit of x-values, defaults to None
         :type x_unit: u.Unit, optional
         :param y_unit: unit of y-values, defaults to None
         :type y_unit: u.Unit, optional
+        :param interval: interval on x-axis in which it is zoomed in, 
+                        y-axis is zoomed accordingly (98%*y_min,102%*y_min)
+        :type interval: ArrayLike, optional
         :param ax: can be specified to plot in a previously created figure, defaults to None
         :type ax: Axis, optional
         :param fig_width: width of figure, defaults to 10
         :type fig_width: int, optional
         :param fig_height: height of figure, defaults to 4
         :type fig_height: int, optional
-        :return: Figure
+        :raises ValueError: if interval has wrong type or shape
+        :return: axis
         """
+        
+        #TODO: add idents!!
         
         #does not convert whole spectrum - only for plotting
         if x_unit is None: 
@@ -333,7 +453,7 @@ class Spectrum(object):
             x = self._x
         else:
             logger.debug(f'Using following new units:\n\tx: {x_unit}')
-            x = self._x.to(x_unit,equivalencies=u.spectral(),)
+            x = self._x.to(x_unit,equivalencies=u.spectral())
             
         if y_unit is None: 
             logger.debug(f'Using the following pre-specified units:\n\ty:{self._y.unit}')
@@ -372,10 +492,44 @@ class Spectrum(object):
         else:
             ax.set_ylabel(f' Flux [{y.unit:latex}]')
             
+        # zoom into set x-region
         if interval is not None:
-            ax.set_xlim(interval[0],interval[1])
+            #Check if interval has length 2
+            if len(interval) == 2:
+                # check if interval has items
+                if all(isinstance(item,(float,int)) for item in interval):
+                    logger.debug(f'Use same units as x [{x.unit}]')
+                    x_min = interval[0] * x.unit
+                    x_max = interval[1] * x.unit
+                    ax.set_xlim(x_min.value,x_max.value)
+                    # Find indices within the specified x-interval
+                    indices = np.where((x >= x_min) & (x <= x_max))
+                    min_y = np.min(y[indices])
+                    max_y = np.max(y[indices])
+                    # zoom into corresponding v values
+                    ax.set_ylim(0.98*min_y.value,1.02*max_y.value)
+                elif all(isinstance(item,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)) for item in interval):
+                    # if interval items have unit of wavelength, frequency or energy, convert them to vel space
+                    x_min = check_x_unit(interval[0])
+                    x_max = check_x_unit(interval[1])
+                    # set x limit
+                    ax.set_xlim(x_min.value,x_max.value)
+                    # Find indices within the specified x-interval
+                    indices = np.where((x >= x_min) & (x <= x_max))
+                    min_y = np.min(y[indices])
+                    max_y = np.max(y[indices])
+                    # Zoom into corresponding v values
+                    ax.set_ylim(0.98*min_y.value,1.02*max_y.value)
+                    
+                else:
+                    logger.error(f'Use wavelength,frquency or energy type units when specifying the interval')
+                        
+            else:
+                logger.error(f'Interval has a length of {interval} which is unequal 2')
+                raise ValueError
+            
 
-        return fig
+        return ax
     
     def zoom_plot(self,intervals:ArrayLike,fig_width=10,fig_height=4, x_unit:u.Unit=None, y_unit:u.Unit=None,**kwargs):
         """Plot zooming into specified intervaks
@@ -413,6 +567,6 @@ class Spectrum(object):
             logger.error(f'Intervals have the wrong shape {np.shape(intervals)}. Instead, they need to have the shape (x,2) or (2,)')
             raise ValueError
         
-        return fig
+        return ax
     
     
