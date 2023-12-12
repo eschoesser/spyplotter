@@ -12,47 +12,91 @@ from .utils.logging import setup_log
 logger = setup_log(__name__)
 
 class SpectralLine:
-    def __init__(self, ion_name, wavelengths, plotting_style_dict={}):
+    def __init__(self, ion_name, wavelengths, plotting_style_dict={},x_unit=u.AA):
         self.ion_name = ion_name
         
+        self.x_unit=x_unit
+        
         #Check how nested wavelength array is
-        #Make sure self.wavelengths is list of lists
+        #Make sure self._wavelengths is list of lists
         if isinstance(wavelengths,(int, float)):
-            self.wavelengths = [[wavelengths]]
+            self._wavelengths = [[SpectralCoord(wavelengths, unit=x_unit)]]
         elif isinstance(wavelengths[0],(int, float)):
-            self.wavelengths = [wavelengths]
+            self._wavelengths = [[SpectralCoord(wavelength, unit=x_unit) for wavelength in wavelengths]]
         elif isinstance(wavelengths[0], (list, tuple, np.ndarray)):
-            self.wavelengths = wavelengths
+            self._wavelengths = [[SpectralCoord(wavelength, unit=x_unit) for wavelength in sublist] for sublist in wavelengths]
         else:
             logger.error('wavelengths have wrong type. Make sure that it is a list/ tuple/ array like of floats.')
+            
+        self._wavelengths_vals = [[float(wavelength.value) for wavelength in sublist] for sublist in self._wavelengths]
         
         self.plotting_style = plotting_style_dict
+    
+    @property
+    def wavelengths(self):
+        return self._wavelengths
+    
+    @property
+    def wavelengths_vals(self):
+        return self._wavelengths_vals
+    
+    def __add__(self, other):
+        if not isinstance(other, SpectralLine):
+            raise ValueError("Can only add SpectralLine objects.")
+
+        # Check if the ion names match
+        if self.ion_name != other.ion_name:
+            raise ValueError("Ion names must match for merging SpectralLines.")
+        
+        if self.x_unit != other.x_unit:
+            other.convert_unit_to(self.x_unit)
+
+        # Combine wavelengths
+        combined_wavelengths = self._wavelengths + other.wavelengths
+
+        # Combine plotting styles
+        combined_plotting_style = {**self.plotting_style, **other.plotting_style}
+
+        # Create a new SpectralLine instance with the merged data
+        merged_spectral_line = SpectralLine(
+            ion_name=self.ion_name,
+            wavelengths=combined_wavelengths,
+            plotting_style_dict=combined_plotting_style,
+            x_unit=self.x_unit
+        )
+
+        return merged_spectral_line
+    
+    def convert_unit_to(self,new_unit):
+        self._wavelengths = [[wavelength.to(new_unit) for wavelength in sublist] for sublist in self._wavelengths]
+        self._wavelengths_vals = [[float(wavelength.value) for wavelength in sublist] for sublist in self._wavelengths]
 
     def __str__(self):
-        return f"SpectralLine({self.ion_name}:\n\t{self.wavelengths},\n\t{self.plotting_style})"
+        return f"SpectralLine({self.ion_name}:\n\t{self._wavelengths_vals},\n\t{self.plotting_style})"
 
     def to_dict(self):
         return {self.ion_name: 
             {
-            'wavelengths': self.wavelengths,
+            'wavelengths': self._wavelengths_vals,
             'plotting_style': self.plotting_style
             }
         }
 
 class LineIdentifier():
     #TODO: add units, possibility for unit adaptions,make sure it works even if entries of dict_lines have different units
-    def __init__(self, spectral_lines={}):
+    def __init__(self, spectral_lines={},x_unit=u.AA):
         #have_all_units = all(isinstance(value, (u.quantity.Quantity,SpectralCoord,SpectralQuantity)) for value in dict_lines.values())
         
         super(LineIdentifier, self).__init__()
         
         self._spectral_lines = spectral_lines
+        self._x_unit = x_unit
         
     def __str__(self):
         str_dict = self.to_dict()
         result = ""
         for i, line in str_dict.items():
-            result += f"{i}: {line}\n"
+            result += f"{i}: {str(line)}\n"
         return result
     
     @property
@@ -61,13 +105,18 @@ class LineIdentifier():
         return self._spectral_lines
     
     @property
+    def x_unit(self):
+        # dictionary of SpectralLine 
+        return self._x_unit
+    
+    @property
     def ions(self):
         return list(self._spectral_lines.keys())
     
     @property
     def wavelengths(self):
         # nested list of all wavelengths for all ions
-        return [self._spectral_lines[ion_name].wavelengths for ion_name in self._spectral_lines.keys()]
+        return [self._spectral_lines[ion_name].wavelengths_vals for ion_name in self._spectral_lines.keys()]
     
     @property
     def wavelengths_flattened(self):
@@ -81,11 +130,11 @@ class LineIdentifier():
     def get_ion_lines(self,ion_name):
         #wavelengths of ion lines
         if ion_name in self._spectral_lines:
-            return self._spectral_lines[ion_name].wavelengths
+            return self._spectral_lines[ion_name].wavelengths_vals
         else:
             logger.error('There are no lines for chosen ion')
             
-    def add_spectral_line(self, spectral_line):
+    def add_spectral_line(self, spectral_line,x_unit=u.AA):
         """Add Spectral Line to Line Identification
         If ion already exists, plotting style is updated to newly given type
 
@@ -95,19 +144,21 @@ class LineIdentifier():
         ion_name = spectral_line.ion_name
 
         if ion_name in self._spectral_lines:
-            wavelengths = spectral_line.wavelengths
-            plotting_dict = spectral_line.plotting_style
-            self._spectral_lines[ion_name].wavelengths.extend(wavelengths)
-            self._spectral_lines[ion_name].plotting_style.update(plotting_dict)
+            self._spectral_lines[ion_name] = self._spectral_lines[ion_name] + spectral_line
         else:
             self._spectral_lines.update({ion_name:spectral_line})
+            
+    def convert_units(self, new_unit):
+        self._x_unit = new_unit
+        for ion_name, spectral_line in self._spectral_lines.items():
+            spectral_line.convert_unit_to(new_unit)
 
     @classmethod
-    def from_yaml(cls, file_path):
+    def from_yaml(cls, file_path,x_unit=u.AA):
         # Read Line Identification class from yaml file
         with open(file_path, 'r') as yaml_file:
             spectral_lines_dict = yaml.load(yaml_file, Loader=yaml.FullLoader)
-        return cls.from_dict(spectral_lines_dict)
+        return cls.from_dict(spectral_lines_dict,x_unit=x_unit)
     
     def to_yaml(self, file_path):
         # Write dictionary to yaml file
@@ -115,19 +166,19 @@ class LineIdentifier():
             yaml.dump(self.to_dict(), yaml_file, default_flow_style=False)
             
     @classmethod
-    def from_dict(cls,spectral_lines_dict):
+    def from_dict(cls,spectral_lines_dict,x_unit=u.AA):
         # Create dictionary of SpectralLine type from dictionary of dictionaries
         spectral_lines = {}
         for ion, line in spectral_lines_dict.items():
             if isinstance(line,dict):
                 if 'plotting_style' in line:
-                    spectral_lines.update({ion:SpectralLine(ion_name=ion, wavelengths=line['wavelengths'],plotting_style_dict=line['plotting_style'])})
+                    spectral_lines.update({ion:SpectralLine(ion_name=ion, wavelengths=line['wavelengths'],plotting_style_dict=line['plotting_style'],x_unit=x_unit)})
                 else:
-                    spectral_lines.update({ion:SpectralLine(ion_name=ion, wavelengths=line['wavelengths'])})
+                    spectral_lines.update({ion:SpectralLine(ion_name=ion, wavelengths=line['wavelengths'],x_unit=x_unit)})
             elif isinstance(line,(float,int,list, tuple, np.ndarray)):
-                spectral_lines.update({ion:SpectralLine(ion_name=ion, wavelengths=line)})
+                spectral_lines.update({ion:SpectralLine(ion_name=ion, wavelengths=line,x_unit=x_unit)})
             
-        return cls(spectral_lines)
+        return cls(spectral_lines,x_unit)
     
     def to_dict(self):
         #Convert all SpectralLine objects to dictionary
@@ -138,7 +189,7 @@ class LineIdentifier():
         return spectral_lines_dict
     
     @classmethod
-    def from_powr_identfile(cls,filename,keyword='',x_unit:u.Unit=None):
+    def from_powr_identfile(cls,filename,keyword='',x_unit:u.Unit=u.AA):
         """Reads input ident file of WRPlot and converts it to
         a dictionary containing the information of the lines 
         and a dictionary containing the text style properties 
@@ -181,17 +232,16 @@ class LineIdentifier():
                         ion_name, plotting_dict = wrplot_to_tex(text_label.strip())
                         
                         if ion_name in spectral_lines:
-                            spectral_lines[ion_name].wavelengths.extend([floats_list])
-                            spectral_lines[ion_name].plotting_style.update(plotting_dict)
+                            spectral_lines[ion_name] = spectral_lines[ion_name] + SpectralLine(ion_name,floats_list,plotting_dict)
                         else:
-                            sl = SpectralLine(ion_name=ion_name, wavelengths=[floats_list], plotting_style_dict=plotting_dict)
+                            sl = SpectralLine(ion_name=ion_name, wavelengths=[floats_list], plotting_style_dict=plotting_dict,x_unit=x_unit)
                             spectral_lines.update({ion_name:sl})
                         break
                 #if one of end keys is read, stop reading
                 if any(rawline.strip().startswith(endkey) for endkey in endkeys):
                     break
                 
-        return cls(spectral_lines)
+        return cls(spectral_lines,x_unit)
         
     def plot(self,
              base_yoff=1.02,
