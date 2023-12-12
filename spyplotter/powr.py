@@ -90,60 +90,6 @@ def readWRPlotDatasets(filepath, keywords, dataset):
         
     return x,y
 
-def readWRPlot_identfile(filepath, keyword):
-    """Reads input ident file of WRPlot and converts it to
-    a dictionary containing the information of the lines 
-    and a dictionary containing the text style properties 
-
-    :param filepath: file path
-    :type filepath: string or Path
-    :param keyword: keyword in ident file that is looked for to find 
-                    corresponding set of lines
-    :type keyword: string
-    :return: dictionary containing string in wrplot format and line positions
-    :rtype: _type_
-    """
-    endkeys = ["FINISH", "END"]
-    result_dict = {}
-    with open(filepath,'r') as file:
-        foundkey = (keyword == "")
-        for line in file:  
-            if (not foundkey): 
-                keypos = line.find(keyword)
-                if (keypos == -1):
-                    #skip iteration if keyword was not found yet
-                    continue
-                else:
-                    foundkey = True
-                    
-            rawline = line.rstrip()
-            # Define the known keywords at beginning of lines that are read
-            known_keywords = [r'\IDENT','\IDMULT']
-            for known_keyword in known_keywords:
-                # Use regular expression to match the known keyword, floats, and the rest of the string
-                pattern = r'({})\s+([\d.]+(?:\s+[\d.]+)*)\s*(.*)'.format(re.escape(known_keyword))
-
-                # Use re.match to find the pattern in the read line
-                match = re.match(pattern, rawline)
-                if match is not None:
-                    #group string into beginning key word, floats and text_label
-                    _, floats, text_label = match.groups()
-                    floats_list = [float(num) for num in re.findall(r'[\d.]+', floats)]
-                    result_dict[text_label.strip()] = floats_list
-                    break
-                #else:
-                    #print('Not matched',known_keyword,rawline)
-            #if one of end keys is read, stop reading
-            if any(rawline.strip().startswith(endkey) for endkey in endkeys):
-                break
-    
-    #convert dictionary keys to latex format
-    renamed_dict = {wrplot_to_tex(key)[0]: value for key, value in result_dict.items()}
-    #store kwargs of every text in list
-    kwargs_dict_list = [wrplot_to_tex(key)[1] for key, value in result_dict.items()]
-        
-    return renamed_dict,kwargs_dict_list
-
 def search_and_replace_math(input_string,search_pattern,replace_pattern):
     """Search and replace string pattern assuming math environment
     Makes sure that math environment is not destroyed by replacing everything by dollar signs
