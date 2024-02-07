@@ -123,10 +123,13 @@ class SpectralLine:
 
 class LineIdentifier():
     #TODO: add units, possibility for unit adaptions,make sure it works even if entries of dict_lines have different units
-    def __init__(self, spectral_lines={},x_unit=u.AA,vrad=0*u.km/u.s):
+    def __init__(self, spectral_lines={},x_unit=None,vrad=0*u.km/u.s):
         #have_all_units = all(isinstance(value, (u.quantity.Quantity,SpectralCoord,SpectralQuantity)) for value in dict_lines.values())
         
-        super(LineIdentifier, self).__init__()
+        if x_unit == None:
+            # if no unit is given, use nm
+            logger.info('As no x_unit was specified, Angstrom are assumed')
+            self._x_unit = u.AA
         
         self._spectral_lines = spectral_lines
         self._x_unit = x_unit
@@ -198,9 +201,10 @@ class LineIdentifier():
             self._spectral_lines.update({ion_name:spectral_line})
             
     def convert_units(self, new_unit):
-        self._x_unit = new_unit
         for ion_name, spectral_line in self._spectral_lines.items():
             spectral_line.convert_unit_to(new_unit)
+            
+        self._x_unit = new_unit
             
     def apply_shift_vrad(self,vrad):
         """Apply radial shift to spectrum, choose if spectrum is overwritten or new spectrum is returned
