@@ -10,6 +10,7 @@ from pathlib import Path
 from .line_identification import LineIdentifier
 from .powr import readWRPlotDatasets
 from .utils.logging import setup_log
+from .spec_tools.plotting_functions import generate_intervals
 from .spec_tools.unit_checks import check_velocity_unit, check_x_unit,doppler_shifted_x
 logger = setup_log(__name__)
 
@@ -84,6 +85,16 @@ class Spectrum(object):
         return np.array([self._x,self._y])
     
     @property
+    def x(self):
+        """Return x values of spectrum
+
+        :param unit: unit of returned value, defaults to None
+        :type unit: u.Unit, optional
+        :return: _description_
+        :rtype: _type_
+        """
+        return self._x
+    
     def x(self,unit:u.Unit=None):
         """Return x values of spectrum
 
@@ -97,12 +108,15 @@ class Spectrum(object):
         else:
             return self._x.to(unit,equivalencies=u.spectral())
     
-    @property
     def y(self, unit:u.Unit=None):
         if unit == None:
             return self._y
         else:
             return self._y.to(unit,equivalencies=u.spectral())
+        
+    @property
+    def y(self):
+        return self._y
         
     @property
     def x_unit(self) -> u.Unit:
@@ -531,7 +545,7 @@ class Spectrum(object):
 
         return ax
     
-    def zoom_plot(self,intervals:ArrayLike,fig_width=10,fig_height=4, x_unit:u.Unit=None, y_unit:u.Unit=None,**kwargs):
+    def plot_zoom(self,intervals:ArrayLike,fig_width=10,fig_height=4, x_unit:u.Unit=None, y_unit:u.Unit=None,**kwargs):
         """Plot zooming into specified intervaks
 
         :param intervals: intervals that are zoomed into
@@ -546,9 +560,14 @@ class Spectrum(object):
         :type y_unit: u.Unit, optional
         :return: figure
         """
-        #ToDo: Add option for specifying multiple columns
         
         #Check if intervals have the right shape (x,2) or (2,)
+        if isinstance(intervals,int):
+            #if it's of type int, divide x in n intervals given by integer
+            intervals = np.array(generate_intervals(interval_start=np.min(self.x(x_unit).value),
+                                           interval_end=np.max(self.x(x_unit).value),
+                                           n_int=intervals))
+            
         if (len(np.shape(intervals))==2) and (np.shape(intervals)[-1]==2):
             #multiple intervals
             n_int = len(intervals)

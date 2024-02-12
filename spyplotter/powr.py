@@ -1,11 +1,12 @@
 import re
 from .utils.logging import setup_log
 logger = setup_log(__name__)
+from typing import List
 
 #Contains functions that are tailored to read output files of PoWR models 
 #and WRPlot input files
 
-def readWRPlotDatasets(filepath, keywords, dataset):
+def readWRPlotDatasets(filepath, keywords:List, dataset:int):
     """
     Read an xy table from a *.plot file which is an output file 
     of a PoWR model
@@ -22,6 +23,9 @@ def readWRPlotDatasets(filepath, keywords, dataset):
     x = []
     y = []
     with open(filepath,'r') as cformFileHandle:
+        if isinstance(keywords, str):
+            keywords = [keywords]
+            
         for keyword in keywords:
             #read only lines in between startkey and endkey
             startkey = "N=" 
@@ -89,6 +93,19 @@ def readWRPlotDatasets(filepath, keywords, dataset):
         y += ydata
         
     return x,y
+
+def read_params_from_kasdefs(filename):
+    variables = {}
+    with open(filename, 'r') as file:
+        for line in file:
+            if line.startswith("\\VAR"):
+                parts = line.strip().split("=")
+                var_name = parts[0].split()[-1]
+                var_value = parts[1].strip()
+                variables[var_name] = float(var_value)
+    return variables
+        
+
 
 def search_and_replace_math(input_string,search_pattern,replace_pattern):
     """Search and replace string pattern assuming math environment
