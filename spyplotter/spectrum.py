@@ -105,7 +105,7 @@ class Spectrum(object):
         """
         return self._x
 
-    def x(self, unit: u.Unit = None):
+    def x_in_unit(self, unit: u.Unit = None):
         """Return x values of spectrum
 
         :param unit: unit of returned value, defaults to None
@@ -118,7 +118,7 @@ class Spectrum(object):
         else:
             return self._x.to(unit, equivalencies=u.spectral())
 
-    def y(self, unit: u.Unit = None):
+    def y_in_unit(self, unit: u.Unit = None):
         if unit == None:
             return self._y
         else:
