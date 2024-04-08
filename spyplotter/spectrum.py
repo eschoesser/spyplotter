@@ -11,7 +11,12 @@ from .line_identification import LineIdentifier
 from .powr import readWRPlotDatasets
 from .utils.logging import setup_log
 from .spec_tools.plotting_functions import generate_intervals
-from .spec_tools.unit_checks import check_velocity_unit, check_x_unit, doppler_shifted_x
+from .spec_tools.unit_checks import (
+    check_velocity_unit,
+    check_x_unit,
+    check_y_unit,
+    doppler_shifted_x,
+)
 
 logger = setup_log(__name__)
 
@@ -21,6 +26,7 @@ class Spectrum(object):
         self,
         x: ArrayLike,
         y: ArrayLike,
+        yerr: ArrayLike = None,
         x_unit: u.Unit = None,
         y_unit: u.Unit = None,
         name: str = None,
@@ -43,10 +49,12 @@ class Spectrum(object):
         :type vrad: float, SpectralCoord, SpectralQuantity or u.quantity.Quantity
         """
         self.name = name
+
         if isinstance(x, (u.quantity.Quantity, SpectralCoord, SpectralQuantity)):
             # if x has already unit, don't change it
             logger.info(f"Keeping units of x: {x.unit}")
             self._x = SpectralCoord(x)
+
         elif x_unit == None:
             # if no unit is given, use nm
             logger.info("As no unit for x was specified, Angstrom are assumed")
@@ -76,6 +84,26 @@ class Spectrum(object):
             self._y = y * y_unit
             self._normalized = False
 
+        if yerr is not None:
+            if isinstance(yerr, (u.quantity.Quantity, SpectralCoord, SpectralQuantity)):
+                # if x has already unit, don't change it
+                self._yerr = yerr
+
+            elif y_unit == None:
+                # if y is not an astropy quantity and no unit was specified, assume a normalized spectrum
+                self._yerr = yerr * u.dimensionless_unscaled
+            else:
+                # if unit is specified and y does not have unit, take specified unit
+                self._yerr = yerr * y_unit
+
+            if self._yerr.unit != self._y.unit:
+                logger.warning(
+                    f"yerr [{self._yerr.unit}] and y [{self._y.unit}] do not have same unit"
+                )
+
+        else:
+            self._yerr = None
+
         v = check_velocity_unit(vrad)
         self._vrad = v
         self._x = self._x.with_radial_velocity_shift(v)
@@ -104,6 +132,17 @@ class Spectrum(object):
         :rtype: _type_
         """
         return self._x
+
+    @property
+    def yerr(self):
+        """Return xerr of spectrum
+
+        :param unit: unit of returned value, defaults to None
+        :type unit: u.Unit, optional
+        :return: _description_
+        :rtype: _type_
+        """
+        return self._yerr
 
     def x_in_unit(self, unit: u.Unit = None):
         """Return x values of spectrum
@@ -319,11 +358,217 @@ class Spectrum(object):
             new_vrad = self._vrad + v
 
             return Spectrum(
-                self.x, self.y, self.x_unit, self.y_unit, self.name, new_vrad
+                x=self.x,
+                y=self.y,
+                x_unit=self.x_unit,
+                y_unit=self.y_unit,
+                name=self.name,
+                vrad=new_vrad,
             )
 
         else:
             return doppler_shifted_x(self.x, vrad)
+
+    def __add__(self, other):
+        if not isinstance(other, Spectrum):
+            raise ValueError("Can only add another Spectrum object.")
+
+        new_x = self.x
+        new_y = self.y
+        new_y_err = self.yerr
+
+        # append spectrum with wavelngths larger than original one
+        mask_x_1 = other.x.value > max(self.x.value)
+        if not np.all(~mask_x_1):
+            new_x = (
+                np.array(self.x.value.tolist() + other.x.value[mask_x_1].tolist())
+                * self.x.unit
+            )
+            new_y = (
+                np.array(self.y.value.tolist() + other.y.value[mask_x_1].tolist())
+                * self.y.unit
+            )
+            new_y_err = (
+                np.array(self.yerr.value.tolist() + other.yerr.value[mask_x_1].tolist())
+                * self.yerr.unit
+            )
+
+        # append spectrum with wavelngths smaller than original one
+        mask_x_2 = other.x.value < min(self.x.value)
+        if not np.all(mask_x_2):
+            new_x = (
+                np.array(other.x.value[mask_x_2].tolist() + new_x.value.tolist())
+                * self.x.unit
+            )
+            new_y = (
+                np.array(other.y.value[mask_x_2].tolist() + new_y.value.tolist())
+                * self.y.unit
+            )
+            new_y_err = (
+                np.array(other.yerr.value[mask_x_2].tolist() + new_y_err.value.tolist())
+                * self.yerr.unit
+            )
+
+        # for overlapping wavelength (x) regions, find min and max of intervals,
+        # bin to the same x_values,
+        # compute SNR, apply SNR weighted mean
+        # Find the overlap interval
+        mask3 = ~(mask_x_1 | mask_x_2)
+
+        if not np.all(~mask3):
+            overlap_start, overlap_end = min(other.x.value[mask3]), max(
+                other.x.value[mask3]
+            )
+
+            x_self = self.x.value
+            x_other = other.x.value
+
+            mask_self_overlap = (x_self >= overlap_start) & (x_self <= overlap_end)
+            mask_other_overlap = (x_other >= overlap_start) & (x_other <= overlap_end)
+
+            # Determine common x values
+            common_x = np.sort(
+                np.unique(
+                    np.concatenate(
+                        (x_self[mask_self_overlap], x_other[mask_other_overlap])
+                    )
+                )
+            )
+
+            # Interpolate self onto common x values
+            interp_self_y = np.interp(common_x, self.x.value, self.y.value)
+            interp_self_yerr = (
+                np.interp(common_x, self.x.value, self.yerr.value)
+                if self.yerr is not None
+                else None
+            )
+
+            ## Interpolate other onto common x values
+            interp_other_y = np.interp(common_x, other.x.value, other.y.value)
+            interp_other_yerr = (
+                np.interp(common_x, other.x.value, other.yerr.value)
+                if other.yerr is not None
+                else None
+            )
+
+            # Compute SNR-weighted average
+            snr_self = (
+                interp_self_y / interp_self_yerr
+                if interp_self_yerr is not None
+                else np.ones_like(interp_self_y)
+            )
+            snr_other = (
+                interp_other_y / interp_other_yerr
+                if interp_other_yerr is not None
+                else np.ones_like(interp_other_y)
+            )
+
+            total_snr = snr_self + snr_other
+            weight_self = snr_self / total_snr
+            weight_other = snr_other / total_snr
+
+            snr_weighted_y = (
+                weight_self * interp_self_y + weight_other * interp_other_y
+            ) * self.y.unit
+
+            snr_weighted_yerr = (
+                np.sqrt(
+                    (weight_self * interp_self_yerr) ** 2
+                    + (weight_other * interp_other_yerr) ** 2
+                )
+                * self.y.unit
+            )
+
+            # Combine spectra
+            mask1 = new_x.value < overlap_start
+            mask2 = new_x.value > overlap_end
+
+            new_x = (
+                np.array(
+                    new_x.value[mask1].tolist()
+                    + common_x.tolist()
+                    + new_x.value[mask2].tolist()
+                )
+                * self.x.unit
+            )
+            new_y = (
+                np.array(
+                    new_y.value[mask1].tolist()
+                    + snr_weighted_y.value.tolist()
+                    + new_y.value[mask2].tolist()
+                )
+                * self.y.unit
+            )
+            new_y_err = (
+                np.array(
+                    new_y_err.value[mask1].tolist()
+                    + snr_weighted_yerr.value.tolist()
+                    + new_y_err.value[mask2].tolist()
+                )
+                * self.yerr.unit
+            )
+
+        else:
+            print("No overlap, so no averaging")
+
+        return Spectrum(new_x, new_y, new_y_err)
+
+    def bin(self, bin_width, overwrite=False, new_spectrum=False):
+        # Compute the number of bins
+        num_bins = int(np.ceil((self._x.value[-1] - self._x.value[0]) / bin_width))
+
+        # Compute bin edges
+        bin_edges = np.linspace(self._x.value[0], self._x.value[-1], num_bins + 1)
+
+        # Initialize arrays to store binned values
+        binned_wavelengths = []
+        binned_flux = []
+        if self._yerr is None:
+            binned_flux_error = None
+        else:
+            binned_flux_error = []
+
+        # Iterate over the bins
+        for i in range(num_bins):
+            # Find indices of wavelengths falling within the current bin
+            bin_indices = np.where(
+                (self._x.value >= bin_edges[i]) & (self._x.value < bin_edges[i + 1])
+            )
+
+            # Compute the average flux and wavelength in the bin
+            if bin_indices[0].size > 0:
+                binned_wavelengths.append(np.mean(self._x.value[bin_indices]))
+                binned_flux.append(np.mean(self._y.value[bin_indices]))
+                if self._yerr is not None:
+                    binned_flux_error.append(
+                        np.sqrt(np.sum(self._yerr.value[bin_indices] ** 2))
+                        / len(self._yerr.value[bin_indices])
+                    )
+
+        x, y = (
+            SpectralCoord(np.array(binned_wavelengths) * self._x.unit),
+            np.array(binned_flux) * self._y.unit,
+        )
+
+        if self._yerr is not None:
+            yerr = np.array(binned_flux_error) * self._yerr.unit
+        else:
+            yerr = None
+
+        if overwrite:
+            self._x = x
+            self._y = y
+            self._yerr = yerr
+
+        elif new_spectrum:
+            return Spectrum(
+                x=x,
+                y=y,
+                yerr=yerr,
+                name=self.name,
+            )
+        else:
+            return x, y, yerr
 
     def to_velocity_space(
         self,
@@ -522,6 +767,7 @@ class Spectrum(object):
         self,
         x_unit: u.Unit = None,
         y_unit: u.Unit = None,
+        yshift=0,
         interval: ArrayLike = None,
         ax=None,
         fig_width=10,
@@ -536,6 +782,8 @@ class Spectrum(object):
         :type x_unit: u.Unit, optional
         :param y_unit: unit of y-values, defaults to None
         :type y_unit: u.Unit, optional
+        :param yshift: shift in y direction, assumed same unit as y
+        :type y_unit: optional
         :param interval: interval on x-axis in which it is zoomed in,
                         y-axis is zoomed accordingly (98%*y_min,102%*y_min)
         :type interval: ArrayLike, optional
@@ -576,7 +824,27 @@ class Spectrum(object):
         else:
             fig = ax.get_figure()
 
-        ax.plot(x, y, **kwargs)
+        # Check yshift unit
+        if isinstance(yshift, (u.quantity.Quantity, SpectralCoord, SpectralQuantity)):
+            if y.unit == y_unit:
+                # if y has already unit, don't change it
+                logger.debug(f"Use given yshift unit: {y.unit}")
+                y_s = yshift
+            else:
+                logger.info("converting yshift to same unit as y_unit")
+                y_s = yshift.to(y_unit, equivalencies=u.spectral())
+
+        elif isinstance(yshift, (float, int)):
+            logger.info("As no unit for y was given, a normalized spectrum is assumed")
+            y_s = yshift * y.unit
+        else:
+            # if unit is specified and y does not have unit, take specified unit
+            logger.error(
+                "Not known format for y used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity"
+            )
+            raise ValueError
+
+        ax.plot(x, y + y_s, **kwargs)
 
         # Change labels of x axis dependent on unit type
         if x.unit.physical_type == u.m.physical_type:
@@ -650,6 +918,7 @@ class Spectrum(object):
     def plot_zoom(
         self,
         intervals: ArrayLike,
+        yshift=0,
         ax: plt.Axes = None,
         fig_width=10,
         fig_height=4,
@@ -677,8 +946,8 @@ class Spectrum(object):
             # if it's of type int, divide x in n intervals given by integer
             intervals = np.array(
                 generate_intervals(
-                    interval_start=np.min(self.x(x_unit).value),
-                    interval_end=np.max(self.x(x_unit).value),
+                    interval_start=np.min(self.x_in_unit(x_unit).value),
+                    interval_end=np.max(self.x_in_unit(x_unit).value),
                     n_int=intervals,
                 )
             )
@@ -692,7 +961,14 @@ class Spectrum(object):
                 )
 
             for i in range(n_int):
-                self.plot(x_unit, y_unit, interval=intervals[i], ax=ax[i], **kwargs)
+                self.plot(
+                    x_unit,
+                    y_unit,
+                    yshift=yshift,
+                    interval=intervals[i],
+                    ax=ax[i],
+                    **kwargs,
+                )
 
         elif (len(np.shape(intervals)) == 1) and (np.shape(intervals)[-1] == 2):
             # only one interval
@@ -702,7 +978,9 @@ class Spectrum(object):
                     n_int, 1, figsize=(fig_width, fig_height * n_int)
                 )
             # Only one interval
-            self.plot(x_unit, y_unit, interval=intervals, ax=ax, **kwargs)
+            self.plot(
+                x_unit, y_unit, interval=intervals, yshift=yshift, ax=ax, **kwargs
+            )
 
         else:
             logger.error(
