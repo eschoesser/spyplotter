@@ -295,6 +295,60 @@ class Spectrum(object):
         return cls(data[:, 0], data[:, 1], xunit, yunit, name, vrad)
 
     @classmethod
+    def from_fits_eso(
+        cls,
+        filepath,
+        xunit: u.Unit = None,
+        yunit: u.Unit = None,
+        name=None,
+        vrad=0.0 * u.km / u.s,
+    ):
+        """Read spectrum from an ESO data product fits file
+
+        :param filepath: path of file, if only path is given and not concrete file, try to open formal.plot
+                        Otherwise: open specified file
+        :type filepath: string or Path (file or directory)
+        :param xunit: unit of x_values, defaults to None (later Angstrom)
+        :type xunit: u.Unit, optional
+        :param yunit: unit of y values, defaults to None (later normalized)
+        :type yunit: u.Unit, optional
+        :param name: name of spectrum, defaults to None
+        :type name: string, optional
+        :param vrad: radial velocity that should be applied to spectrum, defaults to 0.*u.km/u.s
+        :type vrad: float, SpectralCoord, SpectralQuantity or u.quantity.Quantity, optional
+        :raises ValueError: if path or formal.plot in directory does not exist
+        :return: Spectrum object
+        :rtype: Spectrum
+        """
+
+        path = Path(filepath)
+
+        # Check if model path exists
+        if path.exists():
+            fitsf = fits.open(file_path, ignore_missing_simple=True)
+
+        else:
+            logger.error("Path does not exist")
+            raise ValueError
+
+        if yunit is None:
+            # search for signs of a flux calibrated spectrum, otherwise assume normalized spectrum
+            if (
+                ("CONTINUUM" in keywords[0]) or ("EMERGENT" in keywords[0])
+            ) or dataset > 1:
+                yunit = u.erg / u.s / u.cm**2 / u.AA
+                logger.info(
+                    f"Flux calibrated spectrum at 10 pc. Thus using {yunit} as y unit."
+                )
+            else:
+                logger.info(
+                    "No flux unit specified and no signs for y units detected. Thus assuming normalized spectum."
+                )
+                yunit = None
+
+        return cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=vrad)
+
+    @classmethod
     def from_cmfgen(cls, filepath, name: str = None):
         # todo: write a function that imports from a CMFGEN output file a specific simulated Spectrum class
         pass
@@ -380,7 +434,7 @@ class Spectrum(object):
 
         if self.y.unit != other.y.unit:
             raise ValueError(
-                f"spectrum1.y [{self.y.unit}] and spectrum2.y [{other.y.unit}] do not have same units. Please convert units first"
+                f"spectrum1.y and spectrum2.y do not have same units. Please convert units first"
             )
 
         new_x = self.x
@@ -399,8 +453,14 @@ class Spectrum(object):
                 * self.y.unit
             )
             new_y_err = (
-                np.array(self.yerr.value.tolist() + other.yerr.value[mask_x_1].tolist())
-                * self.yerr.unit
+                (
+                    np.array(
+                        self.yerr.value.tolist() + other.yerr.value[mask_x_1].tolist()
+                    )
+                    * self.yerr.unit
+                )
+                if self.yerr is not None
+                else None
             )
 
         # append spectrum with wavelngths smaller than original one
@@ -415,8 +475,14 @@ class Spectrum(object):
                 * self.y.unit
             )
             new_y_err = (
-                np.array(other.yerr.value[mask_x_2].tolist() + new_y_err.value.tolist())
-                * self.yerr.unit
+                (
+                    np.array(
+                        other.yerr.value[mask_x_2].tolist() + new_y_err.value.tolist()
+                    )
+                    * self.yerr.unit
+                )
+                if self.yerr is not None
+                else None
             )
 
         # for overlapping wavelength (x) regions, find min and max of intervals,
@@ -482,11 +548,15 @@ class Spectrum(object):
             ) * self.y.unit
 
             snr_weighted_yerr = (
-                np.sqrt(
-                    (weight_self * interp_self_yerr) ** 2
-                    + (weight_other * interp_other_yerr) ** 2
+                (
+                    np.sqrt(
+                        (weight_self * interp_self_yerr) ** 2
+                        + (weight_other * interp_other_yerr) ** 2
+                    )
+                    * self.y.unit
                 )
-                * self.y.unit
+                if self.yerr is not None
+                else None
             )
 
             # Combine spectra
@@ -510,16 +580,20 @@ class Spectrum(object):
                 * self.y.unit
             )
             new_y_err = (
-                np.array(
-                    new_y_err.value[mask1].tolist()
-                    + snr_weighted_yerr.value.tolist()
-                    + new_y_err.value[mask2].tolist()
+                (
+                    np.array(
+                        new_y_err.value[mask1].tolist()
+                        + snr_weighted_yerr.value.tolist()
+                        + new_y_err.value[mask2].tolist()
+                    )
+                    * self.yerr.unit
                 )
-                * self.yerr.unit
+                if self.yerr is not None
+                else None
             )
 
         else:
-            print("No overlap, so no averaging")
+            logger.debug("No overlap, so no averaging")
 
         return Spectrum(new_x, new_y, new_y_err)
 
