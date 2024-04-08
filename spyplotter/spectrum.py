@@ -255,7 +255,7 @@ class Spectrum(object):
                 )
                 yunit = None
 
-        return cls(x, y, xunit, yunit, name, vrad)
+        return cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=vrad)
 
     @classmethod
     def from_file(
