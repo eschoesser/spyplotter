@@ -373,6 +373,16 @@ class Spectrum(object):
         if not isinstance(other, Spectrum):
             raise ValueError("Can only add another Spectrum object.")
 
+        if self.x.unit != other.x.unit:
+            raise ValueError(
+                f"spectrum1.x [{self.x.unit}] and spectrum2.x [{other.x.unit}] do not have same units. Please convert units first"
+            )
+
+        if self.y.unit != other.y.unit:
+            raise ValueError(
+                f"spectrum1.y [{self.y.unit}] and spectrum2.y [{other.y.unit}] do not have same units. Please convert units first"
+            )
+
         new_x = self.x
         new_y = self.y
         new_y_err = self.yerr
