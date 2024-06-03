@@ -13,15 +13,16 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/eschoesser/spyplotter",
-    license='GPT',
-    python_requires='>=3.6',
+    license="GPT",
+    python_requires=">=3.6",
     install_requires=[
-         "numpy",
-         "matplotlib",
-         "ipympl",
-         "scipy",
-         "pandas",
-         "astropy",
-         "pathlib"
-    ]
+        "numpy",
+        "matplotlib",
+        "ipympl",
+        "scipy",
+        "pandas",
+        "astropy",
+        "pathlib",
+        "typing",
+    ],
 )
