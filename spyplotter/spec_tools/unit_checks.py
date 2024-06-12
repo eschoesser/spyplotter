@@ -5,17 +5,25 @@ from ..utils.logging import setup_log
 logger = setup_log(__name__)
 
 def check_velocity_unit(v):
+    """Checking if input v has a unit already, if not, assign km/s
+
+    :param v: velocity
+    :type v: float or unit
+    :raises ValueError: _description_
+    :return: _description_
+    :rtype: _type_
+    """
+    
+    if isinstance(v,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)) and v.unit.is_equivalent(u.km/u.s):
+        logger.debug(f'Use given velocity unit: {v.unit}')
+        return v
         
-        if isinstance(v,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)) and v.unit.is_equivalent(u.km/u.s):
-            logger.debug(f'Use given velocity unit: {v.unit}')
-            return v
-            
-        elif isinstance(v,(float,int)):
-            logger.info('No unit for vrad specified. Thus assuming km/s.')
-            return v * u.km / u.s
-        else:
-            logger.error('Not known format for vrad used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity')
-            raise ValueError
+    elif isinstance(v,(float,int)):
+        logger.info('No unit for vrad specified. Thus assuming km/s.')
+        return v * u.km / u.s
+    else:
+        logger.error('Not known format for vrad used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity')
+        raise ValueError
         
 def check_x_unit(x):
     
@@ -29,6 +37,22 @@ def check_x_unit(x):
     else:
         logger.error('Not known format for x used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity')
         raise ValueError
+
+def check_y_unit(y):
+    if isinstance(y,(u.quantity.Quantity,SpectralCoord,SpectralQuantity)):
+        # if y has already unit, don't change it
+        logger.debug(f'Use given y unit: {y.unit}')
+        return y
+    
+    elif isinstance(y,(float,int)):
+        
+        logger.info('As no unit for y was given, a normalized spectrum is assumed')
+        return y * u.dimensionless_unscaled
+    else:
+        # if unit is specified and y does not have unit, take specified unit
+        logger.error('Not known format for y used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity')
+        raise ValueError
+    
     
 def doppler_shifted_x(x,vrad):
     #Check and set units of vrad
