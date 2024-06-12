@@ -60,8 +60,12 @@ def readWRPlotDatasets(filepath, keywords: List, dataset: int):
                         else:
                             readindex = 1
                     continue
-                elif readindex == 1 or readindex == 2:
-                    # now we need to read out pairs of lines
+
+                if curline.strip().startswith("KASDEF"):
+                    continue
+
+                elif (readindex == 1 or readindex == 2):
+                    #now we need to read out pairs of lines
                     rawline = curline.rstrip()
                     for endkey in endkeys:
                         if rawline.strip().startswith(endkey):
