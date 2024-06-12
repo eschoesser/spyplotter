@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 from astropy import units as u
 from astropy.coordinates import SpectralCoord, SpectralQuantity
 from pathlib import Path
+from astropy.io import fits
 
 from .line_identification import LineIdentifier
 from .powr import readWRPlotDatasets
@@ -300,7 +301,6 @@ class Spectrum(object):
         filepath,
         xunit: u.Unit = None,
         yunit: u.Unit = None,
-        name=None,
         vrad=0.0 * u.km / u.s,
     ):
         """Read spectrum from an ESO data product fits file
@@ -325,28 +325,45 @@ class Spectrum(object):
 
         # Check if model path exists
         if path.exists():
-            fitsf = fits.open(file_path, ignore_missing_simple=True)
+            fitsf = fits.open(path, ignore_missing_simple=True)
 
         else:
             logger.error("Path does not exist")
             raise ValueError
 
-        if yunit is None:
-            # search for signs of a flux calibrated spectrum, otherwise assume normalized spectrum
-            if (
-                ("CONTINUUM" in keywords[0]) or ("EMERGENT" in keywords[0])
-            ) or dataset > 1:
-                yunit = u.erg / u.s / u.cm**2 / u.AA
-                logger.info(
-                    f"Flux calibrated spectrum at 10 pc. Thus using {yunit} as y unit."
-                )
-            else:
-                logger.info(
-                    "No flux unit specified and no signs for y units detected. Thus assuming normalized spectum."
-                )
-                yunit = None
+        data = fitsf[1].data
+        n_datasets = len(data)
+        err_upper = data["ERROR"]
+        # err_lower = data['ERROR_LOWER']
+        flux = data["FLUX"]
+        lamb = data["WAVELENGTH"]
 
-        return cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=vrad)
+        sp = cls(
+            x=lamb[0][flux[0] > 0],
+            xunit=xunit,
+            y=flux[0][flux[0] > 0],
+            yunit=yunit,
+            yerr=err_upper[0][flux[i] > 0],
+            vrad=-vrad,
+        )
+
+        if n_datasets > 1:
+            logger.info(
+                f"There are {n_datasets} data sets in this file. They will be combined."
+            )
+
+            for i in range(n_datasets - 1):
+                sp2 = cls(
+                    x=lamb[i + 1][flux[i + 1] > 0],
+                    xunit=xunit,
+                    y=flux[i + 1][flux[i + 1] > 0],
+                    yunit=yunit,
+                    yerr=err_upper[i + 1][flux[i + 1] > 0],
+                    vrad=-vrad,
+                )
+                sp = sp + sp2
+
+        return sp
 
     @classmethod
     def from_cmfgen(cls, filepath, name: str = None):
@@ -424,6 +441,17 @@ class Spectrum(object):
             return doppler_shifted_x(self.x, vrad)
 
     def __add__(self, other):
+        """Combine spectra using signal-to-noise-ratio (SNR) weighted mean
+        and appending in non-overlapping regions
+        yerr is scaled accordingly
+
+        ToDO: Fix so that sp1+sp2 = sp1+sp2
+
+        :param other: Spectrum that should be added
+        :type other: Spectrum
+        :return: In overlapping regions, SNR weighted mean is used
+        :rtype: Spectrum
+        """
         if not isinstance(other, Spectrum):
             raise ValueError("Can only add another Spectrum object.")
 
