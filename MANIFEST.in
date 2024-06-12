@@ -1,0 +1,3 @@
+include README.md
+include spyplotter/data/*
+include spyplotter/config/*
