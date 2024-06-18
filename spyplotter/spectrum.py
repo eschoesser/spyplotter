@@ -526,8 +526,6 @@ class Spectrum(object):
             combined_x_segments.index(item) for item in sorted_combined_x_segments
         ]
 
-        # print(f"Segments for other:{[(min(xs),max(xs)) for xs in x_segments_other]}")
-
         # Apply same order to y and yerr
         combined_y_segments = y_segments_self + y_segments_other
         sorted_combined_y_segments = [combined_y_segments[i] for i in sorted_indices]
@@ -634,11 +632,6 @@ class Spectrum(object):
                 weight_i = snr_i / total_snr
 
                 snr_weighted_y = weight_new * interp_y_new + weight_i * interp_y_i
-                print(weight_new)
-                print()
-                print(weight_i)
-                print()
-                print()
 
                 snr_weighted_yerr = (
                     np.sqrt(
