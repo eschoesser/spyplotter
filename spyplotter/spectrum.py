@@ -340,10 +340,10 @@ class Spectrum(object):
 
         sp = cls(
             x=lamb[0][flux[0] > 0],
-            xunit=xunit,
+            x_unit=xunit,
             y=flux[0][flux[0] > 0],
-            yunit=yunit,
-            yerr=err_upper[0][flux[i] > 0],
+            y_unit=yunit,
+            yerr=err_upper[0][flux[0] > 0],
             vrad=-vrad,
         )
 
@@ -355,9 +355,9 @@ class Spectrum(object):
             for i in range(n_datasets - 1):
                 sp2 = cls(
                     x=lamb[i + 1][flux[i + 1] > 0],
-                    xunit=xunit,
+                    x_unit=xunit,
                     y=flux[i + 1][flux[i + 1] > 0],
-                    yunit=yunit,
+                    y_unit=yunit,
                     yerr=err_upper[i + 1][flux[i + 1] > 0],
                     vrad=-vrad,
                 )
@@ -440,6 +440,44 @@ class Spectrum(object):
         else:
             return doppler_shifted_x(self.x, vrad)
 
+    def _get_segments(self, diff_factor=20):
+        """
+        Observed spectra can consist multiple intervals
+        Identify segments in the spectrum based on gaps in x-values.
+
+
+        :param diff_factor: factor of average spacing at which spectrum is divided in segments, defaults to 2
+        :type diff_factor: int, optional
+        :return: segments of spectrum
+        :rtype: _type_
+        """
+        x = self._x.value.tolist()
+        y = self._y.value.tolist()
+        yerr = self._yerr.value.tolist() if self._yerr is not None else None
+
+        # Compute spacing of x
+        diffs = np.diff(x)
+        avg_diff = np.average(diffs)
+
+        # seperate into segments if differences in x larger than diff_factor* average spacing
+        segment_edges = np.where(diffs > diff_factor * avg_diff)[0] + 1
+
+        # create x,y,yerr segments according to computed edges
+        x_segments = np.split(x, segment_edges)
+        y_segments = np.split(y, segment_edges)
+        yerr_segments = np.split(yerr, segment_edges) if yerr is not None else None
+
+        # convert arrays to lists of lists
+        x_segments = [seg.tolist() for seg in x_segments]
+        y_segments = [seg.tolist() for seg in y_segments]
+        yerr_segments = (
+            [seg.tolist() for seg in yerr_segments]
+            if yerr_segments is not None
+            else None
+        )
+
+        return (x_segments, y_segments, yerr_segments)
+
     def __add__(self, other):
         """Combine spectra using signal-to-noise-ratio (SNR) weighted mean
         and appending in non-overlapping regions
@@ -465,165 +503,186 @@ class Spectrum(object):
                 f"spectrum1.y and spectrum2.y do not have same units. Please convert units first"
             )
 
-        new_x = self.x
-        new_y = self.y
-        new_y_err = self.yerr
+        # Compute segemnts of spectra to find gaps where no data was taken
+        x_segments_self, y_segments_self, yerr_segments_self = self._get_segments()
+        logger.debug(f"{len(x_segments_self)} segments found for self")
+        logger.debug(
+            f"Segments for self:{[(min(xs),max(xs)) for xs in x_segments_self]}"
+        )
+        x_segments_other, y_segments_other, yerr_segments_other = other._get_segments()
+        logger.debug(f"{len(x_segments_other)} segments found for other")
+        logger.debug(
+            f"Segments for other:{[(min(xs),max(xs)) for xs in x_segments_other]}"
+        )
 
-        # append spectrum with wavelngths larger than original one
-        mask_x_1 = other.x.value > max(self.x.value)
-        if not np.all(~mask_x_1):
-            new_x = (
-                np.array(self.x.value.tolist() + other.x.value[mask_x_1].tolist())
-                * self.x.unit
-            )
-            new_y = (
-                np.array(self.y.value.tolist() + other.y.value[mask_x_1].tolist())
-                * self.y.unit
-            )
-            new_y_err = (
-                (
-                    np.array(
-                        self.yerr.value.tolist() + other.yerr.value[mask_x_1].tolist()
-                    )
-                    * self.yerr.unit
-                )
-                if self.yerr is not None
-                else None
-            )
+        # Order and combine segments by min(x) of each segment to then add them in right order
+        combined_x_segments = x_segments_self + x_segments_other
 
-        # append spectrum with wavelngths smaller than original one
-        mask_x_2 = other.x.value < min(self.x.value)
-        if not np.all(mask_x_2):
-            new_x = (
-                np.array(other.x.value[mask_x_2].tolist() + new_x.value.tolist())
-                * self.x.unit
-            )
-            new_y = (
-                np.array(other.y.value[mask_x_2].tolist() + new_y.value.tolist())
-                * self.y.unit
-            )
-            new_y_err = (
-                (
-                    np.array(
-                        other.yerr.value[mask_x_2].tolist() + new_y_err.value.tolist()
-                    )
-                    * self.yerr.unit
-                )
-                if self.yerr is not None
-                else None
-            )
+        # Sort the combined lists by min(x) in each segment
+        sorted_combined_x_segments = sorted(combined_x_segments, key=lambda x: x[0])
 
-        # for overlapping wavelength (x) regions, find min and max of intervals,
-        # bin to the same x_values,
-        # compute SNR, apply SNR weighted mean
-        # Find the overlap interval
-        mask3 = ~(mask_x_1 | mask_x_2)
+        # Compute indices of the sorted order to then order y and yerr in same way
+        sorted_indices = [
+            combined_x_segments.index(item) for item in sorted_combined_x_segments
+        ]
 
-        if not np.all(~mask3):
-            overlap_start, overlap_end = min(other.x.value[mask3]), max(
-                other.x.value[mask3]
-            )
+        # print(f"Segments for other:{[(min(xs),max(xs)) for xs in x_segments_other]}")
 
-            x_self = self.x.value
-            x_other = other.x.value
+        # Apply same order to y and yerr
+        combined_y_segments = y_segments_self + y_segments_other
+        sorted_combined_y_segments = [combined_y_segments[i] for i in sorted_indices]
 
-            mask_self_overlap = (x_self >= overlap_start) & (x_self <= overlap_end)
-            mask_other_overlap = (x_other >= overlap_start) & (x_other <= overlap_end)
-
-            # Determine common x values
-            common_x = np.sort(
-                np.unique(
-                    np.concatenate(
-                        (x_self[mask_self_overlap], x_other[mask_other_overlap])
-                    )
-                )
-            )
-
-            # Interpolate self onto common x values
-            interp_self_y = np.interp(common_x, self.x.value, self.y.value)
-            interp_self_yerr = (
-                np.interp(common_x, self.x.value, self.yerr.value)
-                if self.yerr is not None
-                else None
-            )
-
-            ## Interpolate other onto common x values
-            interp_other_y = np.interp(common_x, other.x.value, other.y.value)
-            interp_other_yerr = (
-                np.interp(common_x, other.x.value, other.yerr.value)
-                if other.yerr is not None
-                else None
-            )
-
-            # Compute SNR-weighted average
-            snr_self = (
-                interp_self_y / interp_self_yerr
-                if interp_self_yerr is not None
-                else np.ones_like(interp_self_y)
-            )
-            snr_other = (
-                interp_other_y / interp_other_yerr
-                if interp_other_yerr is not None
-                else np.ones_like(interp_other_y)
-            )
-
-            total_snr = snr_self + snr_other
-            weight_self = snr_self / total_snr
-            weight_other = snr_other / total_snr
-
-            snr_weighted_y = (
-                weight_self * interp_self_y + weight_other * interp_other_y
-            ) * self.y.unit
-
-            snr_weighted_yerr = (
-                (
-                    np.sqrt(
-                        (weight_self * interp_self_yerr) ** 2
-                        + (weight_other * interp_other_yerr) ** 2
-                    )
-                    * self.y.unit
-                )
-                if self.yerr is not None
-                else None
-            )
-
-            # Combine spectra
-            mask1 = new_x.value < overlap_start
-            mask2 = new_x.value > overlap_end
-
-            new_x = (
-                np.array(
-                    new_x.value[mask1].tolist()
-                    + common_x.tolist()
-                    + new_x.value[mask2].tolist()
-                )
-                * self.x.unit
-            )
-            new_y = (
-                np.array(
-                    new_y.value[mask1].tolist()
-                    + snr_weighted_y.value.tolist()
-                    + new_y.value[mask2].tolist()
-                )
-                * self.y.unit
-            )
-            new_y_err = (
-                (
-                    np.array(
-                        new_y_err.value[mask1].tolist()
-                        + snr_weighted_yerr.value.tolist()
-                        + new_y_err.value[mask2].tolist()
-                    )
-                    * self.yerr.unit
-                )
-                if self.yerr is not None
-                else None
-            )
-
+        if self._yerr is not None:
+            combined_yerr_segments = yerr_segments_self + yerr_segments_other
+            sorted_combined_yerr_segments = [
+                combined_yerr_segments[i] for i in sorted_indices
+            ]
         else:
-            logger.debug("No overlap, so no averaging")
+            sorted_combined_yerr_segments = None
 
-        return Spectrum(new_x, new_y, new_y_err)
+        # Start with first segment and then append segments to the right (increasing x)
+        x_new = sorted_combined_x_segments[0]
+        y_new = sorted_combined_y_segments[0]
+        yerr_new = (
+            sorted_combined_yerr_segments[0]
+            if sorted_combined_yerr_segments is not None
+            else None
+        )
+
+        for i in range(1, len(sorted_combined_x_segments)):
+            # values of ith iteration
+            x_i = sorted_combined_x_segments[i]
+            y_i = sorted_combined_y_segments[i]
+            yerr_i = (
+                sorted_combined_yerr_segments[i]
+                if sorted_combined_yerr_segments is not None
+                else None
+            )
+
+            # append spectrum with wavelengths larger than original one
+            mask_x_1 = np.array(x_i) > max(x_new)
+            if not np.all(~mask_x_1):
+                x_new = x_new + np.array(x_i)[mask_x_1].tolist()
+                y_new = y_new + np.array(y_i)[mask_x_1].tolist()
+                yerr_new = (
+                    yerr_new + np.array(yerr_i)[mask_x_1].tolist()
+                    if yerr_new is not None
+                    else None
+                )
+
+            # for overlapping wavelength (x) regions, find min and max of intervals,
+            # bin to the same x_values,
+            # compute SNR, apply SNR weighted mean
+            # Find the overlap interval
+            mask_x_2 = ~(mask_x_1)
+
+            if not np.all(~mask_x_2):
+                # Interval of overlap
+                overlap_start, overlap_end = min(np.array(x_i)[mask_x_2]), max(
+                    np.array(x_i)[mask_x_2]
+                )
+                logger.debug("")
+
+                mask_new_overlap = (np.array(x_new) >= overlap_start) & (
+                    np.array(x_new) <= overlap_end
+                )
+                mask_i_overlap = (np.array(x_i) >= overlap_start) & (
+                    np.array(x_i) <= overlap_end
+                )
+
+                # Determine common x values
+                common_x = np.sort(
+                    np.unique(
+                        np.concatenate(
+                            (
+                                np.array(x_new)[mask_new_overlap],
+                                np.array(x_i)[mask_i_overlap],
+                            )
+                        )
+                    )
+                )
+
+                # Interpolate new onto common x values
+                interp_y_new = np.interp(common_x, x_new, y_new)
+                interp_yerr_new = (
+                    np.interp(common_x, x_new, yerr_new)
+                    if yerr_new is not None
+                    else None
+                )
+
+                ## Interpolate i onto common x values
+                interp_y_i = np.interp(common_x, x_i, y_i)
+                interp_yerr_i = (
+                    np.interp(common_x, x_i, yerr_i) if yerr_i is not None else None
+                )
+
+                # Compute SNR at each x
+                snr_new = (
+                    interp_y_new / interp_yerr_new
+                    if interp_yerr_new is not None
+                    else np.ones_like(interp_y_new)
+                )
+
+                snr_i = (
+                    interp_y_i / interp_yerr_i
+                    if interp_yerr_i is not None
+                    else np.ones_like(interp_y_i)
+                )
+
+                total_snr = snr_new + snr_i
+                weight_new = snr_new / total_snr
+                weight_i = snr_i / total_snr
+
+                snr_weighted_y = weight_new * interp_y_new + weight_i * interp_y_i
+                print(weight_new)
+                print()
+                print(weight_i)
+                print()
+                print()
+
+                snr_weighted_yerr = (
+                    np.sqrt(
+                        (weight_new * interp_yerr_new) ** 2
+                        + (weight_i * interp_yerr_i) ** 2
+                    )
+                    if interp_yerr_new is not None
+                    else None
+                )
+
+                # Combine spectra, evaluate at common_x
+                mask1 = np.array(x_new) < overlap_start
+                mask2 = np.array(x_new) > overlap_end
+
+                x_new = (
+                    np.array(x_new)[mask1].tolist()
+                    + common_x.tolist()
+                    + np.array(x_new)[mask2].tolist()
+                )
+
+                y_new = (
+                    np.array(y_new)[mask1].tolist()
+                    + snr_weighted_y.tolist()
+                    + np.array(y_new)[mask2].tolist()
+                )
+
+                yerr_new = (
+                    (
+                        np.array(yerr_new)[mask1].tolist()
+                        + snr_weighted_yerr.tolist()
+                        + np.array(yerr_new)[mask2].tolist()
+                    )
+                    if yerr_new is not None
+                    else None
+                )
+
+            else:
+                logger.debug("No overlap, so no averaging")
+
+        return Spectrum(
+            x_new * self.x.unit,
+            y_new * self.y.unit,
+            yerr_new * self.yerr.unit if self.yerr is not None else None,
+        )
 
     def bin(self, bin_width, overwrite=False, new_spectrum=False):
         # Compute the number of bins
