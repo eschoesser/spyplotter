@@ -7,7 +7,10 @@ from .model import PoWRModel
 from spyplotter.utils.logging import update_logging_level
 
 
-# configuration matplotlib
-from matplotlib import rc_file
+from .utils.package_data import load_matplotlibrc
 
-rc_file(get_path_of_config_file("matplotlibrc_wrplotlike"))
+# configuration matplotlib
+# from matplotlib import rc_file,rcdefaults
+import matplotlib.pyplot as plt
+
+load_matplotlibrc()
