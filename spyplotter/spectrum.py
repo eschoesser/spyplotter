@@ -73,7 +73,7 @@ class Spectrum(object):
             if y.unit == u.dimensionless_unscaled:
                 self._normalized = True
             else:
-                self.normalized = False
+                self._normalized = False
 
         elif y_unit == None:
             # if y is not an astropy quantity and no unit was specified, assume a normalized spectrum
@@ -104,6 +104,13 @@ class Spectrum(object):
 
         else:
             self._yerr = None
+
+        # mask out regions with zero flux to find segments correctly to not interpolate over zero flux
+        # important when combining observed spectra
+        mask = self._y.value > 1e-30
+        self._x = self._x[mask]
+        self._y = self._y[mask]
+        self._yerr = self._yerr[mask] if self._yerr is not None else None
 
         v = check_velocity_unit(vrad)
         self._vrad = v
@@ -185,6 +192,19 @@ class Spectrum(object):
         return self._vrad
 
     @property
+    def x_min(self):
+        return min(self._x)
+
+    @property
+    def x_max(self):
+        return max(self._x)
+
+    @property
+    def x_lim(self):
+        # useful for ax.set_xlim()
+        return (min(self._x.value), max(self._x.value))
+
+    @property
     def line_identifier(self):
         if self._line_identifier is None:
             logger.warning("Line Identifier was not defined yet")
@@ -204,6 +224,7 @@ class Spectrum(object):
         yunit: u.Unit = None,
         name=None,
         vrad=0.0 * u.km / u.s,
+        bin_width: float = None,
     ):
         """Read spectrum from a PoWR output file
 
@@ -256,7 +277,11 @@ class Spectrum(object):
                 )
                 yunit = None
 
-        return cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=vrad)
+        sp = cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=vrad)
+        if bin_width is not None:
+            sp.bin(bin_width=bin_width, overwrite=True)
+
+        return sp
 
     @classmethod
     def from_file(
@@ -266,6 +291,7 @@ class Spectrum(object):
         yunit: u.Unit = None,
         name: str = None,
         vrad=0.0 * u.km / u.s,
+        bin_width: float = None,
         **kwargs,
     ):
         """read spectrum from a file
@@ -293,7 +319,29 @@ class Spectrum(object):
             logger.error("Path does not exist")
             raise ValueError
 
-        return cls(data[:, 0], data[:, 1], xunit, yunit, name, vrad)
+        if len(data[0]) == 2:
+            yerr = None
+        elif len(data[0]) == 3:
+            yerr = data[:, 2]
+        else:
+            logger.error(
+                f"Read data has {len(data[0])} columns but should have either two (x, y) or three (x,y,yerr)"
+            )
+
+        sp = cls(
+            x=data[:, 0],
+            y=data[:, 1],
+            yerr=yerr,
+            x_unit=xunit,
+            y_unit=yunit,
+            name=name,
+            vrad=vrad,
+        )
+
+        if bin_width is not None:
+            sp.bin(bin_width=bin_width, overwrite=True)
+
+        return sp
 
     @classmethod
     def from_fits_eso(
@@ -302,8 +350,10 @@ class Spectrum(object):
         xunit: u.Unit = None,
         yunit: u.Unit = None,
         vrad=0.0 * u.km / u.s,
+        bin_width: float = None,
     ):
         """Read spectrum from an ESO data product fits file
+        Takes into account that fitsf[1].data has multiple data sets
 
         :param filepath: path of file, if only path is given and not concrete file, try to open formal.plot
                         Otherwise: open specified file
@@ -363,6 +413,9 @@ class Spectrum(object):
                 )
                 sp = sp + sp2
 
+        if bin_width is not None:
+            sp.bin(bin_width=bin_width, overwrite=True)
+
         return sp
 
     @classmethod
@@ -370,10 +423,28 @@ class Spectrum(object):
         # todo: write a function that imports from a CMFGEN output file a specific simulated Spectrum class
         pass
 
-    def to_file(self, filename: str):
-        # todo: write a function that saves table of current spectrum in a csv file
+    def to_file(self, filename: str, **kwargs):
         # advanced todo: save also all parameters that were specified in header
-        pass
+        """Save the wavelength and flux to a .dat file with two columns.
+
+        :param filename: Name of the file to save the data.
+        :type filename: str
+        """
+        # Convert to numpy arrays
+        x_values = self.x.value
+        y_values = self.y.value
+
+        # Combine x and y values into a single 2D or 3D array depending on if error is given
+        if self._yerr is None:
+            data = np.column_stack((x_values, y_values))
+            header = "Wavelength Flux"
+        else:
+            yerr_values = self.yerr.value
+            data = np.column_stack((x_values, y_values, yerr_values))
+            header = "Wavelength Flux FluxError"
+
+        # Save to file
+        np.savetxt(filename, data, fmt="%.6e", header=header, **kwargs)
 
     def convert_units(self, x_unit: u.Unit = None, y_unit: u.Unit = None):
         """Converts units and overwrites them in spectrum
@@ -440,7 +511,7 @@ class Spectrum(object):
         else:
             return doppler_shifted_x(self.x, vrad)
 
-    def _get_segments(self, diff_factor=20):
+    def _get_segments(self, diff_factor=25):
         """
         Observed spectra can consist multiple intervals
         Identify segments in the spectrum based on gaps in x-values.
@@ -1104,19 +1175,32 @@ class Spectrum(object):
         :type y_unit: u.Unit, optional
         :return: figure
         """
-
-        # Check if intervals have the right shape (x,2) or (2,)
-        if isinstance(intervals, int):
-            # if it's of type int, divide x in n intervals given by integer
-            intervals = np.array(
-                generate_intervals(
-                    interval_start=np.min(self.x_in_unit(x_unit).value),
-                    interval_end=np.max(self.x_in_unit(x_unit).value),
-                    n_int=intervals,
+        # ToDo maybe: Check if intervals have the right shape (x,2) or (2,)
+        if ax is None:
+            if isinstance(intervals, int):
+                # if it's of type int, divide x in n intervals given by integer
+                intervals = np.array(
+                    generate_intervals(
+                        interval_start=np.min(self.x_in_unit(x_unit).value),
+                        interval_end=np.max(self.x_in_unit(x_unit).value),
+                        n_int=intervals,
+                    )
                 )
-            )
+        else:
+            if np.shape(ax) == ():
+                # only one axis, no zoom plot but should still not result in error
+                intervals = np.array(ax.get_xlim())
+            elif intervals is None:
+                # use x limits from previous figure
+                intervals = [list(ax[i].get_xlim()) for i in range(len(ax))]
 
-        if (len(np.shape(intervals)) == 2) and (np.shape(intervals)[-1] == 2):
+                logger.warning(
+                    f"Using following intervals from pre-set values in figure given by ax: \n\t{intervals}"
+                )
+
+        if ((len(np.shape(intervals)) == 2) and (np.shape(intervals)[-1] == 2)) and len(
+            intervals
+        ) > 1:
             # multiple intervals
             n_int = len(intervals)
             if ax is None:
@@ -1133,9 +1217,12 @@ class Spectrum(object):
                     ax=ax[i],
                     **kwargs,
                 )
+                if i < n_int - 1:
+                    # only labels on lowest x axis
+                    ax[i].set_xlabel("")
 
         elif (len(np.shape(intervals)) == 1) and (np.shape(intervals)[-1] == 2):
-            # only one interval
+            # only one interval with form [a,b]
             n_int = 1
             if ax is None:
                 fig, ax = plt.subplots(
@@ -1144,6 +1231,17 @@ class Spectrum(object):
             # Only one interval
             self.plot(
                 x_unit, y_unit, interval=intervals, yshift=yshift, ax=ax, **kwargs
+            )
+        elif np.shape(intervals) == (1, 2):
+            # only one interval with form [[a,b]]
+            n_int = 1
+            if ax is None:
+                fig, ax = plt.subplots(
+                    n_int, 1, figsize=(fig_width, fig_height * n_int)
+                )
+            # Only one interval
+            self.plot(
+                x_unit, y_unit, interval=intervals[0], yshift=yshift, ax=ax, **kwargs
             )
 
         else:
