@@ -10,7 +10,8 @@ from astropy.io import fits
 
 from .line_identification import LineIdentifier
 from .powr import readWRPlotDatasets
-from .utils.logging import setup_log
+
+from .spec_tools.convolutions import rotational_broaden_chunks
 from .spec_tools.plotting_functions import generate_intervals
 from .spec_tools.unit_checks import (
     check_velocity_unit,
@@ -18,6 +19,8 @@ from .spec_tools.unit_checks import (
     check_y_unit,
     doppler_shifted_x,
 )
+
+from .utils.logging import setup_log
 
 logger = setup_log(__name__)
 
@@ -203,6 +206,15 @@ class Spectrum(object):
     def x_lim(self):
         # useful for ax.set_xlim()
         return (min(self._x.value), max(self._x.value))
+
+    @property
+    def is_equally_spaced(self):
+        """Check if spectrum is equally spaced
+
+        :return: True if spectrum is equally spaced, False otherwise
+        :rtype: bool
+        """
+        return np.all(np.diff(self._x.value) == np.diff(self._x.value)[0])
 
     @property
     def line_identifier(self):
@@ -418,11 +430,6 @@ class Spectrum(object):
 
         return sp
 
-    @classmethod
-    def from_cmfgen(cls, filepath, name: str = None):
-        # todo: write a function that imports from a CMFGEN output file a specific simulated Spectrum class
-        pass
-
     def to_file(self, filename: str, **kwargs):
         # advanced todo: save also all parameters that were specified in header
         """Save the wavelength and flux to a .dat file with two columns.
@@ -445,6 +452,62 @@ class Spectrum(object):
 
         # Save to file
         np.savetxt(filename, data, fmt="%.6e", header=header, **kwargs)
+
+    def convolve_rotation(
+        self,
+        vsini: float,
+        epsilon: float = 0.005,
+        edge_handling="firstlast",
+        overwrite=False,
+        new_spectrum=False,
+    ):
+        """Convolve spectrum with rotation profile
+
+        :param vrot: rotation velocity
+        :type vrot: float or astropy classes Quantity, SpectralCoord or SpectralQuantity
+        :raises ValueError: if vrot has not one of required formats
+        :param epsilon: limb darkening coefficient
+        :type epsilon: float
+        :param edge_handling: how to handle edges of spectrum, defaults to 'firstlast'
+        :type edge_handling: str, optional
+        """
+
+        # check and set velocity unit
+        vsini = check_velocity_unit(vsini)
+
+        if not self.is_equally_spaced:
+            logger.warning(
+                "Spectrum is not equally spaced. Interpolating to equally spaced grid."
+            )
+            # Interpolate to equally spaced grid
+            self.interpolate_equally_spaced()
+
+        new_flux = rotational_broaden_chunks(
+            self.x.value,
+            self.y.value,
+            vsini,
+            epsilon=epsilon,
+            edge_handling=edge_handling,
+        )
+
+        if overwrite:
+            # Overwrite spectrum
+            logger.debug("Overwrite spectrum which is broadened")
+            self._y = new_flux * self.y.unit
+
+        elif new_spectrum:
+            # Return new object of spectrum
+            logger.debug("Return broadened spectrum")
+            return Spectrum(
+                x=self.x,
+                y=new_flux * self.y.unit,
+                x_unit=self.x_unit,
+                y_unit=self.y_unit,
+                name=self.name,
+                vrad=self.vrad,
+            )
+        else:
+            return new_flux * self.y.unit
 
     def convert_units(self, x_unit: u.Unit = None, y_unit: u.Unit = None):
         """Converts units and overwrites them in spectrum
@@ -804,6 +867,41 @@ class Spectrum(object):
             )
         else:
             return x, y, yerr
+
+    def interpolate_equally_spaced(self, dx=None, new_spectrum=False):
+        """Interpolate the spectrum to have equally spaced x-values
+        :param dx: spacing of x values, defaults to None
+        :type dx: float, optional
+        :param new_spectrum: if True, return a new spectrum object, defaults to False
+        :type new_spectrum: bool, optional
+        :return: Interpolated spectrum
+        :rtype: Spectrum
+        """
+        if dx is None:
+            dx = np.mean(np.diff(self._x.value))
+        # Create a new x array with equally spaced values
+        x_new = np.arange(self._x.value[0], self._x.value[-1], dx) * self._x.unit
+        # Interpolate the y values to the new x values
+        y_new = np.interp(x_new.value, self._x.value, self._y.value)
+        # Create a new Spectrum object with the interpolated values
+        if self._yerr is not None:
+            yerr_new = np.interp(x_new.value, self._x.value, self._yerr.value)
+
+        if new_spectrum:
+            logger.debug("Return new object with equally spaced x-values")
+            new_spectrum = Spectrum(
+                x=x_new,
+                y=y_new * self._y.unit,
+                yerr=yerr_new * self._yerr.unit if self._yerr is not None else None,
+                name=self.name,
+            )
+            return new_spectrum
+        else:
+            logger.debug("Overwrite spectrum with equally spaced x-values")
+            self._x = x_new
+            self._y = y_new * self._y.unit
+            if self._yerr is not None:
+                self._yerr = np.interp(x_new.value, self._x.value, self._yerr.value)
 
     def to_velocity_space(
         self,
