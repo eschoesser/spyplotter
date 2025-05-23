@@ -11,7 +11,11 @@ from astropy.io import fits
 from .line_identification import LineIdentifier
 from .powr import readWRPlotDatasets
 
-from .spec_tools.convolutions import rotational_broaden_chunks
+from .spec_tools.convolutions import (
+    rotational_broaden_chunks,
+    gaussian_broaden,
+    macroturbulence_broaden_chunks,
+)
 from .spec_tools.plotting_functions import generate_intervals
 from .spec_tools.unit_checks import (
     check_velocity_unit,
@@ -486,6 +490,109 @@ class Spectrum(object):
             self.x.value,
             self.y.value,
             vsini,
+            epsilon=epsilon,
+            edge_handling=edge_handling,
+        )
+
+        if overwrite:
+            # Overwrite spectrum
+            logger.debug("Overwrite spectrum which is broadened")
+            self._y = new_flux * self.y.unit
+
+        elif new_spectrum:
+            # Return new object of spectrum
+            logger.debug("Return broadened spectrum")
+            return Spectrum(
+                x=self.x,
+                y=new_flux * self.y.unit,
+                x_unit=self.x_unit,
+                y_unit=self.y_unit,
+                name=self.name,
+                vrad=self.vrad,
+            )
+        else:
+            return new_flux * self.y.unit
+
+    def convolve_gaussian(
+        self,
+        fwhm: float,
+        edge_handling="firstlast",
+        overwrite=False,
+        new_spectrum=False,
+    ):
+        """Convolve spectrum with Gaussian profile
+
+        :param fwhm: FWHM of Gaussian in nm
+        :type fwhm: float
+        :param edge_handling: how to handle edges of spectrum, defaults to 'firstlast'
+        :type edge_handling: str, optional
+        """
+        if not self.is_equally_spaced:
+            logger.warning(
+                "Spectrum is not equally spaced. Interpolating to equally spaced grid."
+            )
+            # Interpolate to equally spaced grid
+            self.interpolate_equally_spaced()
+
+        new_flux = gaussian_broaden(
+            self.x.value,
+            self.y.value,
+            fwhm,
+            edge_handling=edge_handling,
+        )
+
+        if overwrite:
+            # Overwrite spectrum
+            logger.debug("Overwrite spectrum which is broadened")
+            self._y = new_flux * self.y.unit
+
+        elif new_spectrum:
+            # Return new object of spectrum
+            logger.debug("Return broadened spectrum")
+            return Spectrum(
+                x=self.x,
+                y=new_flux * self.y.unit,
+                x_unit=self.x_unit,
+                y_unit=self.y_unit,
+                name=self.name,
+                vrad=self.vrad,
+            )
+        else:
+            return new_flux * self.y.unit
+
+    def convolve_macroturbulence(
+        self,
+        vmac,
+        edge_handling="firstlast",
+        epsilon=0.005,
+        overwrite=False,
+        new_spectrum=False,
+    ):
+        """Convolve spectrum with macroturbulence profile
+        :param vmac: macroturbulence velocity
+        :type vmac: float or astropy classes Quantity, SpectralCoord or SpectralQuantity
+        :param edge_handling: how to handle edges of spectrum, defaults to 'firstlast'
+        :type edge_handling: str, optional
+        :param new_spectrum: if True, return a new spectrum object, defaults to False
+        :type new_spectrum: bool, optional
+        :param overwrite: if True, overwrite the current spectrum, defaults to False
+        :type overwrite: bool, optional
+        """
+        # check and set velocity unit
+        vmac = check_velocity_unit(vmac)
+
+        # check if spectrum is equally spaced
+        if not self.is_equally_spaced:
+            logger.warning(
+                "Spectrum is not equally spaced. Interpolating to equally spaced grid."
+            )
+            # Interpolate to equally spaced grid
+            self.interpolate_equally_spaced()
+
+        new_flux = macroturbulence_broaden_chunks(
+            self.x.value,
+            self.y.value,
+            vmac,
             epsilon=epsilon,
             edge_handling=edge_handling,
         )
