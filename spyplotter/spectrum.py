@@ -10,7 +10,12 @@ from astropy.io import fits
 
 from .line_identification import LineIdentifier
 from .powr import readWRPlotDatasets
-from .utils.logging import setup_log
+
+from .spec_tools.convolutions import (
+    rotational_broaden_chunks,
+    gaussian_broaden,
+    macroturbulence_broaden_chunks,
+)
 from .spec_tools.plotting_functions import generate_intervals
 from .spec_tools.unit_checks import (
     check_velocity_unit,
@@ -18,6 +23,8 @@ from .spec_tools.unit_checks import (
     check_y_unit,
     doppler_shifted_x,
 )
+
+from .utils.logging import setup_log
 
 logger = setup_log(__name__)
 
@@ -73,7 +80,7 @@ class Spectrum(object):
             if y.unit == u.dimensionless_unscaled:
                 self._normalized = True
             else:
-                self.normalized = False
+                self._normalized = False
 
         elif y_unit == None:
             # if y is not an astropy quantity and no unit was specified, assume a normalized spectrum
@@ -104,6 +111,13 @@ class Spectrum(object):
 
         else:
             self._yerr = None
+
+        # mask out regions with zero flux to find segments correctly to not interpolate over zero flux
+        # important when combining observed spectra
+        mask = self._y.value > 1e-30
+        self._x = self._x[mask]
+        self._y = self._y[mask]
+        self._yerr = self._yerr[mask] if self._yerr is not None else None
 
         v = check_velocity_unit(vrad)
         self._vrad = v
@@ -185,6 +199,28 @@ class Spectrum(object):
         return self._vrad
 
     @property
+    def x_min(self):
+        return min(self._x)
+
+    @property
+    def x_max(self):
+        return max(self._x)
+
+    @property
+    def x_lim(self):
+        # useful for ax.set_xlim()
+        return (min(self._x.value), max(self._x.value))
+
+    @property
+    def is_equally_spaced(self):
+        """Check if spectrum is equally spaced
+
+        :return: True if spectrum is equally spaced, False otherwise
+        :rtype: bool
+        """
+        return np.all(np.diff(self._x.value) == np.diff(self._x.value)[0])
+
+    @property
     def line_identifier(self):
         if self._line_identifier is None:
             logger.warning("Line Identifier was not defined yet")
@@ -204,6 +240,7 @@ class Spectrum(object):
         yunit: u.Unit = None,
         name=None,
         vrad=0.0 * u.km / u.s,
+        bin_width: float = None,
     ):
         """Read spectrum from a PoWR output file
 
@@ -256,7 +293,11 @@ class Spectrum(object):
                 )
                 yunit = None
 
-        return cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=vrad)
+        sp = cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=vrad)
+        if bin_width is not None:
+            sp.bin(bin_width=bin_width, overwrite=True)
+
+        return sp
 
     @classmethod
     def from_file(
@@ -266,6 +307,7 @@ class Spectrum(object):
         yunit: u.Unit = None,
         name: str = None,
         vrad=0.0 * u.km / u.s,
+        bin_width: float = None,
         **kwargs,
     ):
         """read spectrum from a file
@@ -293,7 +335,29 @@ class Spectrum(object):
             logger.error("Path does not exist")
             raise ValueError
 
-        return cls(data[:, 0], data[:, 1], xunit, yunit, name, vrad)
+        if len(data[0]) == 2:
+            yerr = None
+        elif len(data[0]) == 3:
+            yerr = data[:, 2]
+        else:
+            logger.error(
+                f"Read data has {len(data[0])} columns but should have either two (x, y) or three (x,y,yerr)"
+            )
+
+        sp = cls(
+            x=data[:, 0],
+            y=data[:, 1],
+            yerr=yerr,
+            x_unit=xunit,
+            y_unit=yunit,
+            name=name,
+            vrad=vrad,
+        )
+
+        if bin_width is not None:
+            sp.bin(bin_width=bin_width, overwrite=True)
+
+        return sp
 
     @classmethod
     def from_fits_eso(
@@ -302,8 +366,10 @@ class Spectrum(object):
         xunit: u.Unit = None,
         yunit: u.Unit = None,
         vrad=0.0 * u.km / u.s,
+        bin_width: float = None,
     ):
         """Read spectrum from an ESO data product fits file
+        Takes into account that fitsf[1].data has multiple data sets
 
         :param filepath: path of file, if only path is given and not concrete file, try to open formal.plot
                         Otherwise: open specified file
@@ -363,17 +429,192 @@ class Spectrum(object):
                 )
                 sp = sp + sp2
 
+        if bin_width is not None:
+            sp.bin(bin_width=bin_width, overwrite=True)
+
         return sp
 
-    @classmethod
-    def from_cmfgen(cls, filepath, name: str = None):
-        # todo: write a function that imports from a CMFGEN output file a specific simulated Spectrum class
-        pass
-
-    def to_file(self, filename: str):
-        # todo: write a function that saves table of current spectrum in a csv file
+    def to_file(self, filename: str, **kwargs):
         # advanced todo: save also all parameters that were specified in header
-        pass
+        """Save the wavelength and flux to a .dat file with two columns.
+
+        :param filename: Name of the file to save the data.
+        :type filename: str
+        """
+        # Convert to numpy arrays
+        x_values = self.x.value
+        y_values = self.y.value
+
+        # Combine x and y values into a single 2D or 3D array depending on if error is given
+        if self._yerr is None:
+            data = np.column_stack((x_values, y_values))
+            header = "Wavelength Flux"
+        else:
+            yerr_values = self.yerr.value
+            data = np.column_stack((x_values, y_values, yerr_values))
+            header = "Wavelength Flux FluxError"
+
+        # Save to file
+        np.savetxt(filename, data, fmt="%.6e", header=header, **kwargs)
+
+    def convolve_rotation(
+        self,
+        vsini: float,
+        epsilon: float = 0.005,
+        edge_handling="firstlast",
+        overwrite=False,
+        new_spectrum=False,
+    ):
+        """Convolve spectrum with rotation profile
+
+        :param vrot: rotation velocity
+        :type vrot: float or astropy classes Quantity, SpectralCoord or SpectralQuantity
+        :raises ValueError: if vrot has not one of required formats
+        :param epsilon: limb darkening coefficient
+        :type epsilon: float
+        :param edge_handling: how to handle edges of spectrum, defaults to 'firstlast'
+        :type edge_handling: str, optional
+        """
+
+        # check and set velocity unit
+        vsini = check_velocity_unit(vsini)
+
+        if not self.is_equally_spaced:
+            logger.warning(
+                "Spectrum is not equally spaced. Interpolating to equally spaced grid."
+            )
+            # Interpolate to equally spaced grid
+            self.interpolate_equally_spaced()
+
+        new_flux = rotational_broaden_chunks(
+            self.x.value,
+            self.y.value,
+            vsini,
+            epsilon=epsilon,
+            edge_handling=edge_handling,
+        )
+
+        if overwrite:
+            # Overwrite spectrum
+            logger.debug("Overwrite spectrum which is broadened")
+            self._y = new_flux * self.y.unit
+
+        elif new_spectrum:
+            # Return new object of spectrum
+            logger.debug("Return broadened spectrum")
+            return Spectrum(
+                x=self.x,
+                y=new_flux * self.y.unit,
+                x_unit=self.x_unit,
+                y_unit=self.y_unit,
+                name=self.name,
+                vrad=self.vrad,
+            )
+        else:
+            return new_flux * self.y.unit
+
+    def convolve_gaussian(
+        self,
+        fwhm: float,
+        edge_handling="firstlast",
+        overwrite=False,
+        new_spectrum=False,
+    ):
+        """Convolve spectrum with Gaussian profile
+
+        :param fwhm: FWHM of Gaussian in nm
+        :type fwhm: float
+        :param edge_handling: how to handle edges of spectrum, defaults to 'firstlast'
+        :type edge_handling: str, optional
+        """
+        if not self.is_equally_spaced:
+            logger.warning(
+                "Spectrum is not equally spaced. Interpolating to equally spaced grid."
+            )
+            # Interpolate to equally spaced grid
+            self.interpolate_equally_spaced()
+
+        new_flux = gaussian_broaden(
+            self.x.value,
+            self.y.value,
+            fwhm,
+            edge_handling=edge_handling,
+        )
+
+        if overwrite:
+            # Overwrite spectrum
+            logger.debug("Overwrite spectrum which is broadened")
+            self._y = new_flux * self.y.unit
+
+        elif new_spectrum:
+            # Return new object of spectrum
+            logger.debug("Return broadened spectrum")
+            return Spectrum(
+                x=self.x,
+                y=new_flux * self.y.unit,
+                x_unit=self.x_unit,
+                y_unit=self.y_unit,
+                name=self.name,
+                vrad=self.vrad,
+            )
+        else:
+            return new_flux * self.y.unit
+
+    def convolve_macroturbulence(
+        self,
+        vmac,
+        edge_handling="firstlast",
+        epsilon=0.005,
+        overwrite=False,
+        new_spectrum=False,
+    ):
+        """Convolve spectrum with macroturbulence profile
+        :param vmac: macroturbulence velocity
+        :type vmac: float or astropy classes Quantity, SpectralCoord or SpectralQuantity
+        :param edge_handling: how to handle edges of spectrum, defaults to 'firstlast'
+        :type edge_handling: str, optional
+        :param new_spectrum: if True, return a new spectrum object, defaults to False
+        :type new_spectrum: bool, optional
+        :param overwrite: if True, overwrite the current spectrum, defaults to False
+        :type overwrite: bool, optional
+        """
+        # check and set velocity unit
+        vmac = check_velocity_unit(vmac)
+
+        # check if spectrum is equally spaced
+        if not self.is_equally_spaced:
+            logger.warning(
+                "Spectrum is not equally spaced. Interpolating to equally spaced grid."
+            )
+            # Interpolate to equally spaced grid
+            self.interpolate_equally_spaced()
+
+        new_flux = macroturbulence_broaden_chunks(
+            self.x.value,
+            self.y.value,
+            vmac,
+            epsilon=epsilon,
+            edge_handling=edge_handling,
+        )
+
+        if overwrite:
+            # Overwrite spectrum
+            logger.debug("Overwrite spectrum which is broadened")
+            self._y = new_flux * self.y.unit
+
+        elif new_spectrum:
+            # Return new object of spectrum
+            logger.debug("Return broadened spectrum")
+            return Spectrum(
+                x=self.x,
+                y=new_flux * self.y.unit,
+                x_unit=self.x_unit,
+                y_unit=self.y_unit,
+                name=self.name,
+                vrad=self.vrad,
+            )
+        else:
+            return new_flux * self.y.unit
 
     def convert_units(self, x_unit: u.Unit = None, y_unit: u.Unit = None):
         """Converts units and overwrites them in spectrum
@@ -440,7 +681,7 @@ class Spectrum(object):
         else:
             return doppler_shifted_x(self.x, vrad)
 
-    def _get_segments(self, diff_factor=20):
+    def _get_segments(self, diff_factor=25):
         """
         Observed spectra can consist multiple intervals
         Identify segments in the spectrum based on gaps in x-values.
@@ -525,8 +766,6 @@ class Spectrum(object):
         sorted_indices = [
             combined_x_segments.index(item) for item in sorted_combined_x_segments
         ]
-
-        # print(f"Segments for other:{[(min(xs),max(xs)) for xs in x_segments_other]}")
 
         # Apply same order to y and yerr
         combined_y_segments = y_segments_self + y_segments_other
@@ -634,11 +873,6 @@ class Spectrum(object):
                 weight_i = snr_i / total_snr
 
                 snr_weighted_y = weight_new * interp_y_new + weight_i * interp_y_i
-                print(weight_new)
-                print()
-                print(weight_i)
-                print()
-                print()
 
                 snr_weighted_yerr = (
                     np.sqrt(
@@ -740,6 +974,41 @@ class Spectrum(object):
             )
         else:
             return x, y, yerr
+
+    def interpolate_equally_spaced(self, dx=None, new_spectrum=False):
+        """Interpolate the spectrum to have equally spaced x-values
+        :param dx: spacing of x values, defaults to None
+        :type dx: float, optional
+        :param new_spectrum: if True, return a new spectrum object, defaults to False
+        :type new_spectrum: bool, optional
+        :return: Interpolated spectrum
+        :rtype: Spectrum
+        """
+        if dx is None:
+            dx = np.mean(np.diff(self._x.value))
+        # Create a new x array with equally spaced values
+        x_new = np.arange(self._x.value[0], self._x.value[-1], dx) * self._x.unit
+        # Interpolate the y values to the new x values
+        y_new = np.interp(x_new.value, self._x.value, self._y.value)
+        # Create a new Spectrum object with the interpolated values
+        if self._yerr is not None:
+            yerr_new = np.interp(x_new.value, self._x.value, self._yerr.value)
+
+        if new_spectrum:
+            logger.debug("Return new object with equally spaced x-values")
+            new_spectrum = Spectrum(
+                x=x_new,
+                y=y_new * self._y.unit,
+                yerr=yerr_new * self._yerr.unit if self._yerr is not None else None,
+                name=self.name,
+            )
+            return new_spectrum
+        else:
+            logger.debug("Overwrite spectrum with equally spaced x-values")
+            self._x = x_new
+            self._y = y_new * self._y.unit
+            if self._yerr is not None:
+                self._yerr = np.interp(x_new.value, self._x.value, self._yerr.value)
 
     def to_velocity_space(
         self,
@@ -1111,19 +1380,32 @@ class Spectrum(object):
         :type y_unit: u.Unit, optional
         :return: figure
         """
-
-        # Check if intervals have the right shape (x,2) or (2,)
-        if isinstance(intervals, int):
-            # if it's of type int, divide x in n intervals given by integer
-            intervals = np.array(
-                generate_intervals(
-                    interval_start=np.min(self.x_in_unit(x_unit).value),
-                    interval_end=np.max(self.x_in_unit(x_unit).value),
-                    n_int=intervals,
+        # ToDo maybe: Check if intervals have the right shape (x,2) or (2,)
+        if ax is None:
+            if isinstance(intervals, int):
+                # if it's of type int, divide x in n intervals given by integer
+                intervals = np.array(
+                    generate_intervals(
+                        interval_start=np.min(self.x_in_unit(x_unit).value),
+                        interval_end=np.max(self.x_in_unit(x_unit).value),
+                        n_int=intervals,
+                    )
                 )
-            )
+        else:
+            if np.shape(ax) == ():
+                # only one axis, no zoom plot but should still not result in error
+                intervals = np.array(ax.get_xlim())
+            elif intervals is None:
+                # use x limits from previous figure
+                intervals = [list(ax[i].get_xlim()) for i in range(len(ax))]
 
-        if (len(np.shape(intervals)) == 2) and (np.shape(intervals)[-1] == 2):
+                logger.warning(
+                    f"Using following intervals from pre-set values in figure given by ax: \n\t{intervals}"
+                )
+
+        if ((len(np.shape(intervals)) == 2) and (np.shape(intervals)[-1] == 2)) and len(
+            intervals
+        ) > 1:
             # multiple intervals
             n_int = len(intervals)
             if ax is None:
@@ -1140,9 +1422,12 @@ class Spectrum(object):
                     ax=ax[i],
                     **kwargs,
                 )
+                if i < n_int - 1:
+                    # only labels on lowest x axis
+                    ax[i].set_xlabel("")
 
         elif (len(np.shape(intervals)) == 1) and (np.shape(intervals)[-1] == 2):
-            # only one interval
+            # only one interval with form [a,b]
             n_int = 1
             if ax is None:
                 fig, ax = plt.subplots(
@@ -1151,6 +1436,17 @@ class Spectrum(object):
             # Only one interval
             self.plot(
                 x_unit, y_unit, interval=intervals, yshift=yshift, ax=ax, **kwargs
+            )
+        elif np.shape(intervals) == (1, 2):
+            # only one interval with form [[a,b]]
+            n_int = 1
+            if ax is None:
+                fig, ax = plt.subplots(
+                    n_int, 1, figsize=(fig_width, fig_height * n_int)
+                )
+            # Only one interval
+            self.plot(
+                x_unit, y_unit, interval=intervals[0], yshift=yshift, ax=ax, **kwargs
             )
 
         else:

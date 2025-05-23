@@ -1,0 +1,254 @@
+PAPERFORMAT A4H BBROTATE
+MULTIPLOT START
+PLOT   : Absolute Fluxes
+*
+\LETTERSIZE 0.25
+* 
+\OFS  2.0 21.7
+\INBOX
+\PENDEF=3
+\DEFAULTCOLOR=4
+\FONT=TIMES
+\SET_NDATMAX = 600000
+*2:orange
+\DEFINECOLOR 2  0.93, 0.62, 0.18
+*3:red
+\DEFINECOLOR 3  0.73, 0.25, 0.25
+*4:blue
+\DEFINECOLOR 4  0.36, 0.49, 0.79
+*5:green
+\DEFINECOLOR 5  0.1 0.75 0.45
+*6: pink
+\DEFINECOLOR 6  0.9, 0.5, 0.8
+*7:purple
+\DEFINECOLOR 7  0.5, 0.3, 0.6
+
+*
+*
+\INSTRUCTION EXPORT
+*********************
+****  variables  ****
+*********************
+*
+\VAR STAR  = "SMC 006894, O9V"
+\VAR EBV = 0.08
+\VAR DM =  18.7
+\VAR SHIFT = 0.00
+
+\VAR vmac0 = 0 km/s 
+\VAR vmac10 = 10 km/s 
+\VAR vmac100 = 50 km/s 
+
+\VAR vrot0 =  0
+\VAR vrot100 =  100
+\VAR vrot500 =  500
+
+\VAR bin =0.1
+\VAR Z_sol = 1.307e-3
+
+\VAR CONVOL_HST  = "GAUSS=0.1"
+* For HR spectra: FWHM = 0.2 Angstrom 
+* For LR specta: FWHM = 0.6 Angstrom 
+\VAR CONVOL_VLT = "GAUSS=0.6"
+
+
+****  models  ****
+ 
+
+\VAR PATH = test_data/
+
+\VAR MODEL1 = T33_logg4.0_Mdot-8.5_logL4.72_v1994_vmic8_Z0.1
+\VAR OUTVROT100_OPT = test_data/test_convolutions/vrot100_opt.dat
+\VAR OUTVROT100_UV = test_data/test_convolutions/vrot100_uv.dat
+\VAR OUTVROT500_OPT = test_data/test_convolutions/vrot500_opt.dat
+\VAR OUTVROT500_UV = test_data/test_convolutions/vrot500_uv.dat
+
+\VAR OUTVMAC10_OPT = test_data/test_convolutions/vmac10_opt.dat
+\VAR OUTVMAC100_OPT = test_data/test_convolutions/vmac100_opt.dat
+
+\VAR OUTCON06_OPT = test_data/test_convolutions/conv06_opt.dat
+\VAR OUTCON01_UV = test_data/test_convolutions/conv01_uv.dat
+
+\EXPR MODEL1 = $PATH // $MODEL1
+\EXPR FNAME1     = $MODEL1 // /formal.plot
+\EXPR FNAMEOUT1  = $MODEL1 // /formal.out
+\EXPR FNAMEFLUX1 = $MODEL1 // /wruniq.plot
+
+  
+\VAR INCKEY_OPT = "* OPT" 
+
+****  IDENTS  **** 
+\VAR ident_file = ~eschoesser/projects/bridge/idents/ident_O.dat
+*
+****  Reddening is split into galactic and SMC contribution! ****
+\VAR REDD = $EBV
+\EXPR NEGREDD =  -1  * $REDD
+\VAR  REDD_GAL = 0.04
+\EXPR REDD = $REDD - $REDD_GAL
+\EXPR REDD = $REDD //  " SMC" 
+
+ 
+**** rotational velocity  ****
+\VAR clight = 300000.
+ 
+\CALC dlamrot0 = LOG(1. + $vrot0 / $clight)
+\CALC dlamrot100 = LOG(1. + $vrot100 / $clight)
+\CALC dlamrot500 = LOG(1. + $vrot500 / $clight)
+
+\CALC dlammac0 = LOG(1. + $vmac0 / $clight)
+\CALC dlammac10 = LOG(1. + $vmac10 / $clight)
+\CALC dlammac100 = LOG(1. + $vmac100 / $clight)
+
+\INSTRUCTION NO-EXPORT
+
+***********************************************************************
+***********************************************************************
+***********************************************************************
+ 
+*PLOT   : HST1.1
+
+*2:orange
+\DEFINECOLOR 2  0.93, 0.62, 0.18
+*3:red
+\DEFINECOLOR 3  0.73, 0.25, 0.25
+*4:blue
+\DEFINECOLOR 4  0.36, 0.49, 0.79
+*5:green
+\DEFINECOLOR 5  0.1 0.75 0.45
+*6: pink
+\DEFINECOLOR 6  0.9, 0.5, 0.8
+*7:purple
+\DEFINECOLOR 7  0.5, 0.3, 0.6
+\LETTERSIZE 0.25
+\OFS  2.0 15
+\INBOX
+*\NOCOPYRIGHT
+\PENDEF=3
+\DEFAULTCOLOR=4
+\FONT=TIMES
+\SET_NDATMAX = 600000
+\PEN=2
+\LINUN XMIN 1. XMAX 1.  0. 0.
+
+***********************************************
+\PEN=2
+\ID_INBOX
+\IDLENG 1
+\IDSIZE 0.25
+\IDY 1.3U
+\INCLUDE $ident_file INCKEY="* IDENT IUE SHORT"
+ \LINUNLAB 1560 1.55 1780 1.55 0 0 0 0.27 &EFe IV
+\LINUNLAB 1830 1.65 2100 1.65 0 0 0 0.27 &EFe III
+ HEADER :
+ X-ACHSE:\CENTER\#l# / \A
+ Y-ACHSE:\CENTER\Normalized flux  
+     MASSTAB    MINIMUM    MAXIMUM    TEILUNGEN  BESCHRIFT. DARUNTER
+ X:  18.0CM     1130.0      1180.0       5.00     10.00     0.0000     
+ Y:  5.5CM      0       1.8        0.500     0.5     0.0000     
+
+*****  MODELS  *****
+
+*** Normalized optical spectra ***
+
+*** Different vrot ***
+
+N=? SYMBOL=9 SIZE=0.08 COLOR=2 PEN=4
+COMMAND SETNAME MODEL1
+**COMMAND BINNING $bin
+**COMMAND CONVOL $CONVOL_VLT
+COMMAND XLOG
+COMMAND CONVOL ROT $dlamrot100
+**COMMAND CONVOL MACRO-RT $dlammac0
+COMMAND XDEX
+COMMAND WRITE FILE=$OUTVROT100_OPT DATASET=MODEL1
+COMMAND INCLUDE $FNAME1 INCKEY=$INCKEY_OPT
+
+N=? SYMBOL=9 SIZE=0.08 COLOR=2 PEN=4
+COMMAND SETNAME MODEL2
+**COMMAND BINNING $bin
+**COMMAND CONVOL $CONVOL_VLT
+COMMAND XLOG
+COMMAND CONVOL ROT $dlamrot500
+**COMMAND CONVOL MACRO-RT $dlammac0
+COMMAND XDEX
+COMMAND WRITE FILE=$OUTVROT500_OPT DATASET=MODEL2
+COMMAND INCLUDE $FNAME1 INCKEY=$INCKEY_OPT
+
+*** Different vmac ***
+
+N=? SYMBOL=9 SIZE=0.08 COLOR=2 PEN=4
+COMMAND SETNAME MODEL3
+**COMMAND BINNING $bin
+**COMMAND CONVOL $CONVOL_VLT
+COMMAND XLOG
+**COMMAND CONVOL ROT $dlamrot100
+COMMAND CONVOL MACRO-RT $dlammac10
+COMMAND XDEX
+COMMAND WRITE FILE=$OUTVMAC10_OPT DATASET=MODEL3
+COMMAND INCLUDE $FNAME1 INCKEY=$INCKEY_OPT
+
+N=? SYMBOL=9 SIZE=0.08 COLOR=2 PEN=4
+COMMAND SETNAME MODEL4
+**COMMAND BINNING $bin
+**COMMAND CONVOL $CONVOL_VLT
+COMMAND XLOG
+**COMMAND CONVOL ROT $dlamrot100
+COMMAND CONVOL MACRO-RT $dlammac100
+COMMAND XDEX
+COMMAND WRITE FILE=$OUTVMAC100_OPT DATASET=MODEL4
+COMMAND INCLUDE $FNAME1 INCKEY=$INCKEY_OPT
+
+*** Different instrumental convolution ***
+
+N=? SYMBOL=9 SIZE=0.08 COLOR=2 PEN=4
+COMMAND SETNAME MODEL5
+**COMMAND BINNING $bin
+COMMAND CONVOL $CONVOL_VLT
+COMMAND XLOG
+**COMMAND CONVOL ROT $dlamrot100
+**COMMAND CONVOL MACRO-RT $dlammac100
+COMMAND XDEX
+COMMAND WRITE FILE=$OUTCON06_OPT DATASET=MODEL5
+COMMAND INCLUDE $FNAME1 INCKEY=$INCKEY_OPT
+
+*** Normalized UV spectra ***
+
+N=? SYMBOL=9 SIZE=0.1 COLOR=2 PEN=3  
+COMMAND SETNAME MODEL6
+COMMAND XLOG
+COMMAND CONVOL ROT $dlamrot100
+**COMMAND CONVOL MACRO-RT $dlammac
+COMMAND XDEX
+**COMMAND BINNING $bin
+**COMMAND CONVOL $CONVOL_HST
+COMMAND WRITE FILE=$OUTVROT100_UV DATASET=MODEL6
+COMMAND INCLUDE $FNAME1 INCKEY="* IUE SHORT"
+
+N=? SYMBOL=9 SIZE=0.1 COLOR=5 PEN=3  
+COMMAND SETNAME MODEL7
+COMMAND XLOG
+COMMAND CONVOL ROT $dlamrot500
+**COMMAND CONVOL MACRO-RT $dlammac
+COMMAND XDEX
+**COMMAND BINNING $bin
+**COMMAND HLYMANA EBV= $NEGREDD VTURB=$VTURBHL VRAD=$VRADHL
+**COMMAND CONVOL $CONVOL_HST
+COMMAND WRITE FILE=$OUTVROT500_UV DATASET=MODEL7
+COMMAND INCLUDE $FNAME1 INCKEY="* IUE SHORT"
+
+N=? SYMBOL=9 SIZE=0.1 COLOR=5 PEN=3  
+COMMAND SETNAME MODEL8
+COMMAND XLOG
+**COMMAND CONVOL ROT $dlamrot500
+**COMMAND CONVOL MACRO-RT $dlammac
+COMMAND XDEX
+**COMMAND BINNING $bin
+**COMMAND HLYMANA EBV= $NEGREDD VTURB=$VTURBHL VRAD=$VRADHL
+COMMAND CONVOL $CONVOL_HST
+COMMAND WRITE FILE=$OUTCON01_UV DATASET=MODEL8
+COMMAND INCLUDE $FNAME1 INCKEY="* IUE SHORT"
+
+
+END
+
+MULTIPLOT END
