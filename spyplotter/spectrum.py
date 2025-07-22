@@ -410,7 +410,7 @@ class Spectrum(object):
             y=flux[0][flux[0] > 0],
             y_unit=yunit,
             yerr=err_upper[0][flux[0] > 0],
-            vrad=-vrad,
+            vrad=vrad,
         )
 
         if n_datasets > 1:
@@ -425,7 +425,7 @@ class Spectrum(object):
                     y=flux[i + 1][flux[i + 1] > 0],
                     y_unit=yunit,
                     yerr=err_upper[i + 1][flux[i + 1] > 0],
-                    vrad=-vrad,
+                    vrad=vrad,
                 )
                 sp = sp + sp2
 
