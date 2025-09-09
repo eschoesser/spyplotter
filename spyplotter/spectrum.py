@@ -28,6 +28,8 @@ from .utils.logging import setup_log
 
 logger = setup_log(__name__)
 
+from dust_extinction.parameter_averages import F99, CCM89, O94, F04, G16
+
 
 class Spectrum(object):
     def __init__(
@@ -40,6 +42,7 @@ class Spectrum(object):
         name: str = None,
         vrad=0 * u.km / u.s,
         line_identifier: LineIdentifier = None,
+        mask_small_fluxes: bool = False,
     ):
         """Generic class for a spectrum. The same class is used for observed and model spectra
 
@@ -114,10 +117,12 @@ class Spectrum(object):
 
         # mask out regions with zero flux to find segments correctly to not interpolate over zero flux
         # important when combining observed spectra
-        mask = self._y.value > 1e-30
-        self._x = self._x[mask]
-        self._y = self._y[mask]
-        self._yerr = self._yerr[mask] if self._yerr is not None else None
+        if mask_small_fluxes:
+            logger.debug("Masking out regions with zero flux")
+            mask = self._y.value > 1e-30
+            self._x = self._x[mask]
+            self._y = self._y[mask]
+            self._yerr = self._yerr[mask] if self._yerr is not None else None
 
         v = check_velocity_unit(vrad)
         self._vrad = v
@@ -1044,6 +1049,88 @@ class Spectrum(object):
             doppler_convention=doppler_convention,
             doppler_rest=x_rest,
         )
+
+    def redden(
+        self,
+        ebv,
+        rv=3.1,
+        law=None,
+        ext=None,
+        overwrite=False,
+        new_spectrum=False,
+    ):
+        """Apply reddening to the spectrum using the extinction laws from the
+        `dust_extinction package <https://dust-extinction.readthedocs.io/en/latest/>`
+
+        To check which laws should be used in which wavelength range and for which galaxy (MW,MW center, LMC, SMC), check <https://dust-extinction.readthedocs.io/en/latest/dust_extinction/choose_model.html#notes>
+
+        :param ebv: E(B-V) value for reddening
+        :type ebv: float
+        :param r_v: R_V value for reddening, defaults to 3.1
+        :type r_v: float, optional
+        :param law: extinction law as string, see `dust_extinction package` for options,
+                    defaults to 'Fitzpatrick99'
+        :type law: str, optional
+        :param overwrite: if True, overwrite the current spectrum, defaults to False
+        :type overwrite: bool, optional
+        :param new_spectrum: if True, return a new spectrum object, defaults to False
+        :type new_spectrum: bool, optional
+        :raises ValueError: if x unit is not in wavelength units (e.g. Angstrom)
+        :return: reddened spectrum or new Spectrum object
+        :rtype: Spectrum or ArrayLike
+        """
+        # check if x unit is in wavelength units
+        if not self.x.unit.is_equivalent(u.AA):
+            raise ValueError(
+                f"x unit [{self.x.unit}] is not in wavelength units (e.g. Angstrom). Cannot apply reddening."
+            )
+
+        if ext is not None and law is None:
+            logger.debug("Using given extinction law object")
+            logger.warning(
+                "Only EBV will be used, R_v is assumed to be set in ext model"
+            )
+        elif ext is None and law is not None:
+            # Select extinction law
+            law = law.lower()
+            logger.debug(f"Using extinction law: {law}")
+            if law in ["fitzpatrick99", "f99"]:
+                ext = F99(Rv=rv)
+            elif law in ["ccm89"]:
+                ext = CCM89(Rv=rv)
+            elif law in ["odonnell94", "o94"]:
+                ext = O94(Rv=rv)
+            elif law in ["fitzpatrick04", "f04"]:
+                ext = F04(Rv=rv)
+            elif law in ["gordon16", "g16"]:
+                ext = G16(Rv=rv)
+            else:
+                raise ValueError(
+                    f"Unknown extinction law: {law}, use dust_extinction package directly or choose between 'Fitzpatrick99', 'CCM89', 'O94', 'F04', 'G16'"
+                )
+        else:
+            raise ValueError("Either law or ext must be specified but not both")
+
+        # Calculate the extinction curve (A_lambda / A(V)), then apply to flux
+        flux_reddened = self.y.value * ext.extinguish(self.x, Ebv=ebv)
+
+        if overwrite:
+            logger.debug("Overwrite spectrum with reddened flux values")
+            self._y = flux_reddened * self.y.unit
+            return self._y
+
+        elif new_spectrum:
+            logger.debug("Return new object with reddened flux values")
+            return Spectrum(
+                x=self.x,
+                y=flux_reddened * self.y.unit,
+                x_unit=self.x_unit,
+                y_unit=self.y_unit,
+                name=self.name,
+                vrad=self.vrad,
+            )
+        else:
+            return flux_reddened * self.y.unit
 
     def plot_velocity(
         self,

@@ -91,8 +91,8 @@ def readWRPlotDatasets(filepath, keywords: List, dataset: int):
                 logger.error(f"Could not find dataset {dataset}")
                 raise KeyError
 
-        x += xdata
-        y += ydata
+            x += xdata
+            y += ydata
 
     return x, y
 
@@ -140,6 +140,25 @@ def search_and_replace_math(input_string, search_pattern, replace_pattern):
             )
             new_string += math_string
     return new_string
+
+
+# Function to rename keys in a dictionary
+def abundances_powr2periodictable(data_dict):
+    dict_powr2ps = {
+        "H": "H",
+        "HE": "He",
+        "N": "N",
+        "C": "C",
+        "O": "O",
+        "S": "S",
+        "MG": "Mg",
+        "SI": "Si",
+        "P": "P",
+        "AL": "Al",
+        "NE": "Ne",
+        "G": "Fe",
+    }
+    return {dict_powr2ps.get(key, key): value for key, value in data_dict.items()}
 
 
 def wrplot_to_tex(text_string):
@@ -204,6 +223,12 @@ def wrplot_to_tex(text_string):
         if key in new_string:
             # If found, strip the key
             new_string = new_string.replace(key, value)
+
+    # Strip any remaining &N
+    new_string = re.sub(r"&N", "", new_string)
+
+    # Strip any remaining &
+    new_string = new_string.strip("&")
 
     return new_string, style_dict
 
