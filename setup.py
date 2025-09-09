@@ -26,5 +26,6 @@ setuptools.setup(
         "astropy",
         "pathlib",
         "typing",
+        "dust_extinction",
     ],
 )
