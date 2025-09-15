@@ -26,7 +26,7 @@ setuptools.setup(
         "pandas",
         "astropy",
         "pathlib",
-        "pkg_resources",
+        "setuptools",
         "typing",
         "dust_extinction",
     ],
