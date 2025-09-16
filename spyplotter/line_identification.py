@@ -491,6 +491,11 @@ class LineIdentifier:
         # vertical stem lines connecting to text label
         ax.vlines(stem_lamb, ymin, ymax, **line_kwargs)
 
+        # Estimate text height from fontsize (in data coordinates)
+        fontsize = text_kwargs.get("fontsize", 10)
+        # This is a rough estimate; you can tune the multiplier if needed
+        estimated_text_height = fontsize * 0.002
+
         # print text labels
         i = 0
         ymax_text = 0
@@ -510,16 +515,17 @@ class LineIdentifier:
                     text_object = ax.text(
                         stem_lamb[i], y_text, s=line.ion_name, fontdict=font_dict
                     )
-                    fig.canvas.draw()
-                    # find largest y coordinate of text to set ylim correctly later
-                    text_extent = text_object.get_window_extent()
-                    data_extent = text_extent.transformed(ax.transData.inverted())
-                    if data_extent.height + y_text > ymax_text:
-                        ymax_text = data_extent.height + y_text
+                    # fig.canvas.draw()
+                    ## find largest y coordinate of text to set ylim correctly later
+                    # text_extent = text_object.get_window_extent()
+                    # data_extent = text_extent.transformed(ax.transData.inverted())
+                    # if data_extent.height + y_text > ymax_text:
+                    #    ymax_text = data_extent.height + y_text
                 i += 1
 
         # coordinates of text of labels
         _, ymax = ax.get_ylim()
+        ymax_text = y_text + estimated_text_height
         if ymax < ymax_text:
             logger.warning(
                 f"Text out of ylim, automatically adapting ymax now from ymax_old={ymax:.2f} to ymax_new={1.05 * ymax_text:.2f}"
