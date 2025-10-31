@@ -56,7 +56,7 @@ class SpectralLine:
                 "wavelengths have wrong type. Make sure that it is a list/ tuple/ array like of floats."
             )
 
-        self.plotting_style = plotting_style_dict
+        self._plotting_style = plotting_style_dict
 
     @property
     def wavelengths(self):
@@ -68,6 +68,10 @@ class SpectralLine:
             [float(wavelength.value) for wavelength in sublist]
             for sublist in self._wavelengths
         ]
+
+    @property
+    def plotting_style(self):
+        return self._plotting_style
 
     @property
     def vrad(self):
@@ -160,6 +164,17 @@ class SpectralLine:
         }
 
 
+class ISMLine(SpectralLine):
+    """Class for ISM lines, which are not shifted by radial velocity"""
+
+    def __init__(self, ion_name, wavelengths, plotting_style_dict={}, x_unit=u.AA):
+        super().__init__(
+            ion_name, wavelengths, plotting_style_dict, x_unit, vrad=0 * u.km / u.s
+        )
+
+    # use voigt or Lorentz profile for ISM lines depending on input params given
+
+
 class LineIdentifier:
     # TODO: add units, possibility for unit adaptions,make sure it works even if entries of dict_lines have different units
     def __init__(self, spectral_lines={}, x_unit=None, vrad=0 * u.km / u.s):
@@ -221,9 +236,14 @@ class LineIdentifier:
     def vrad(self):
         return self._vrad
 
-    def update_plotting_style(self, ion_name, new_plotting_style):
+    def update_plotting_style_ion(self, ion_name, new_plotting_style):
         if ion_name in self._spectral_lines:
-            self._spectral_lines[ion_name].plotting_style = new_plotting_style
+            self._spectral_lines[ion_name].plotting_style.update(new_plotting_style)
+
+    def update_plotting_style_all(self, new_plotting_style):
+        for ion_name in self.ions:
+            if ion_name in self._spectral_lines:
+                self._spectral_lines[ion_name].plotting_style.update(new_plotting_style)
 
     def get_ion_lines(self, ion_name):
         # wavelengths of ion lines
@@ -397,7 +417,7 @@ class LineIdentifier:
 
     def plot(
         self,
-        base_yoff=1.02,
+        base_yoff=0.7,
         root=0.05,
         stem=0.05,
         stem_xoff_rel_cen=0,
@@ -423,6 +443,8 @@ class LineIdentifier:
         vvvvv\ /vvvvvvv\    /vvvvvvvvvvvvvvv-spectrum-vvvv
             V         |  |
                         \/
+        the text height and vertical offsets (base_yoff,root,stem, text_yoff)
+        are scaled relative to the y-axis range.
 
         stem_xoff_rel_cen : stem x offset relative to the center (C, average wavelength of the lambdas (lambN set))
         base_yoff         : base of the ident y offset
@@ -439,6 +461,14 @@ class LineIdentifier:
         else:
             fig = ax.get_figure()
             xlim = ax.get_xlim()
+            ymin, ymax = ax.get_ylim()
+
+        y_range = ymax - ymin
+        # Scale offsets to y-range
+        base_yoff_scaled = ymin + base_yoff * y_range
+        root_scaled = root * y_range
+        stem_scaled = stem * y_range
+        text_yoff_scaled = text_yoff * y_range
 
         if default_kwargs:
             # use default plotting style and only update explicitly changed values
@@ -460,8 +490,8 @@ class LineIdentifier:
         # flattened list of all wavelengths
         wavel = self.wavelengths_flattened
         # y value for vertical root lines
-        ymin = base_yoff
-        ymax = base_yoff + root
+        ymin = base_yoff_scaled
+        ymax = base_yoff_scaled + root_scaled
         # vertical root lines which point to spectral lines
         ax.vlines(wavel, ymin=ymin, ymax=ymax, **line_kwargs)
 
@@ -474,7 +504,7 @@ class LineIdentifier:
         mask = xmin_xmax_values[:, 0] != xmin_xmax_values[:, 1]
         xmin_xmax_multiplet_values = xmin_xmax_values[mask]
         # all horizontal lines are on same y value
-        y = [base_yoff + root] * len(xmin_xmax_multiplet_values)
+        y = [base_yoff_scaled + root_scaled] * len(xmin_xmax_multiplet_values)
         # horizontal lines connecting root lines corresponding to one multiplet
         ax.hlines(
             y,
@@ -486,15 +516,19 @@ class LineIdentifier:
         # stem line x value to label
         stem_lamb = np.mean(xmin_xmax_values, axis=1) + stem_xoff_rel_cen
         # constant y values
-        ymin = base_yoff + root
-        ymax = base_yoff + root + stem
+        ymin = base_yoff_scaled + root_scaled
+        ymax = base_yoff_scaled + root_scaled + stem_scaled
         # vertical stem lines connecting to text label
         ax.vlines(stem_lamb, ymin, ymax, **line_kwargs)
 
+        # Estimate text height from fontsize (in data coordinates)
+        fontsize = text_kwargs.get("fontsize")
+        # This is a rough estimate; you can tune the multiplier if needed
+        estimated_text_height = fontsize * 0.002 * y_range
+
         # print text labels
         i = 0
-        ymax_text = 0
-        y_text = ymax + text_yoff
+        y_text = ymax + text_yoff_scaled
         for line in self.spectral_lines.values():
             font_dict = text_kwargs.copy()
             font_dict.update(line.plotting_style)
@@ -510,16 +544,11 @@ class LineIdentifier:
                     text_object = ax.text(
                         stem_lamb[i], y_text, s=line.ion_name, fontdict=font_dict
                     )
-                    fig.canvas.draw()
-                    # find largest y coordinate of text to set ylim correctly later
-                    text_extent = text_object.get_window_extent()
-                    data_extent = text_extent.transformed(ax.transData.inverted())
-                    if data_extent.height + y_text > ymax_text:
-                        ymax_text = data_extent.height + y_text
                 i += 1
 
         # coordinates of text of labels
         _, ymax = ax.get_ylim()
+        ymax_text = y_text + estimated_text_height
         if ymax < ymax_text:
             logger.warning(
                 f"Text out of ylim, automatically adapting ymax now from ymax_old={ymax:.2f} to ymax_new={1.05 * ymax_text:.2f}"

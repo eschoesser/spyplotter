@@ -28,6 +28,10 @@ from .utils.logging import setup_log
 
 logger = setup_log(__name__)
 
+from dust_extinction.parameter_averages import F99, CCM89, O94, F04, G16
+
+from astropy.table import Table
+
 
 class Spectrum(object):
     def __init__(
@@ -40,6 +44,7 @@ class Spectrum(object):
         name: str = None,
         vrad=0 * u.km / u.s,
         line_identifier: LineIdentifier = None,
+        mask_small_fluxes: bool = False,
     ):
         """Generic class for a spectrum. The same class is used for observed and model spectra
 
@@ -114,14 +119,16 @@ class Spectrum(object):
 
         # mask out regions with zero flux to find segments correctly to not interpolate over zero flux
         # important when combining observed spectra
-        mask = self._y.value > 1e-30
-        self._x = self._x[mask]
-        self._y = self._y[mask]
-        self._yerr = self._yerr[mask] if self._yerr is not None else None
+        if mask_small_fluxes:
+            logger.debug("Masking out regions with zero flux")
+            mask = self._y.value > 1e-30
+            self._x = self._x[mask]
+            self._y = self._y[mask]
+            self._yerr = self._yerr[mask] if self._yerr is not None else None
 
         v = check_velocity_unit(vrad)
         self._vrad = v
-        self._x = self._x.with_radial_velocity_shift(v)
+        # self._x = self._x.with_radial_velocity_shift(v)
         self._line_identifier = line_identifier
 
     def __call__(self):
@@ -293,9 +300,11 @@ class Spectrum(object):
                 )
                 yunit = None
 
-        sp = cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=vrad)
+        sp = cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=0)
         if bin_width is not None:
             sp.bin(bin_width=bin_width, overwrite=True)
+        if vrad.value != 0:
+            sp.apply_shift_vrad(vrad, overwrite=True)
 
         return sp
 
@@ -356,6 +365,8 @@ class Spectrum(object):
 
         if bin_width is not None:
             sp.bin(bin_width=bin_width, overwrite=True)
+        if vrad.value != 0:
+            sp.apply_shift_vrad(vrad, overwrite=True)
 
         return sp
 
@@ -410,7 +421,7 @@ class Spectrum(object):
             y=flux[0][flux[0] > 0],
             y_unit=yunit,
             yerr=err_upper[0][flux[0] > 0],
-            vrad=-vrad,
+            vrad=vrad,
         )
 
         if n_datasets > 1:
@@ -425,14 +436,63 @@ class Spectrum(object):
                     y=flux[i + 1][flux[i + 1] > 0],
                     y_unit=yunit,
                     yerr=err_upper[i + 1][flux[i + 1] > 0],
-                    vrad=-vrad,
+                    vrad=vrad,
                 )
                 sp = sp + sp2
 
         if bin_width is not None:
             sp.bin(bin_width=bin_width, overwrite=True)
+        if vrad.value != 0:
+            sp.apply_shift_vrad(vrad, overwrite=True)
 
         return sp
+
+    @classmethod
+    def from_votable(
+        cls,
+        filepath,
+        x_unit_out=u.AA,
+        y_unit_out=u.mJy,
+        name: str = None,
+        vrad=0.0 * u.km / u.s,
+    ):
+        """Read photometry vot table as from http://vizier.cds.unistra.fr/vizier/sed/
+        - assumes frequency in GHz and flux in Jy
+
+        :param filepath: path of the votable file
+        :type filepath: pathlib path or str
+        :param x_unit_out: unit to which output spectrum is converted to, defaults to u.AA
+        :type x_unit_out: astropy unit, optional
+        :param y_unit_out: unit of y to which spectrum is converted to, defaults to u.mJy
+        :type y_unit_out: astropy unit, optional
+        :raises ValueError: _description_
+        :return: _description_
+        :rtype: _type_
+        """
+        path = Path(filepath)
+
+        # Check if model path exists
+        if path.exists():
+            table = Table.read(path, format="votable")
+
+        else:
+            logger.error("Path does not exist")
+            raise ValueError
+
+        freq = table["sed_freq"].data * u.GHz
+        flux = table["sed_flux"].data * u.Jy
+        flux_error = table["sed_eflux"].data * u.Jy
+        logger.debug(
+            f"Assuming x (frequency) unit: {freq.unit}, flux and flux error unit: {flux.unit}"
+        )
+
+        return cls(
+            x=freq.to(x_unit_out, equivalencies=u.spectral()),
+            y=flux.to(y_unit_out),
+            yerr=flux_error.to(y_unit_out),
+            name=name,
+            vrad=vrad,
+        )
 
     def to_file(self, filename: str, **kwargs):
         # advanced todo: save also all parameters that were specified in header
@@ -1045,6 +1105,88 @@ class Spectrum(object):
             doppler_rest=x_rest,
         )
 
+    def redden(
+        self,
+        ebv,
+        rv=3.1,
+        law=None,
+        ext=None,
+        overwrite=False,
+        new_spectrum=False,
+    ):
+        """Apply reddening to the spectrum using the extinction laws from the
+        `dust_extinction package <https://dust-extinction.readthedocs.io/en/latest/>`
+
+        To check which laws should be used in which wavelength range and for which galaxy (MW,MW center, LMC, SMC), check <https://dust-extinction.readthedocs.io/en/latest/dust_extinction/choose_model.html#notes>
+
+        :param ebv: E(B-V) value for reddening
+        :type ebv: float
+        :param r_v: R_V value for reddening, defaults to 3.1
+        :type r_v: float, optional
+        :param law: extinction law as string, see `dust_extinction package` for options,
+                    defaults to 'Fitzpatrick99'
+        :type law: str, optional
+        :param overwrite: if True, overwrite the current spectrum, defaults to False
+        :type overwrite: bool, optional
+        :param new_spectrum: if True, return a new spectrum object, defaults to False
+        :type new_spectrum: bool, optional
+        :raises ValueError: if x unit is not in wavelength units (e.g. Angstrom)
+        :return: reddened spectrum or new Spectrum object
+        :rtype: Spectrum or ArrayLike
+        """
+        # check if x unit is in wavelength units
+        if not self.x.unit.is_equivalent(u.AA):
+            raise ValueError(
+                f"x unit [{self.x.unit}] is not in wavelength units (e.g. Angstrom). Cannot apply reddening."
+            )
+
+        if ext is not None and law is None:
+            logger.debug("Using given extinction law object")
+            logger.warning(
+                "Only EBV will be used, R_v is assumed to be set in ext model"
+            )
+        elif ext is None and law is not None:
+            # Select extinction law
+            law = law.lower()
+            logger.debug(f"Using extinction law: {law}")
+            if law in ["fitzpatrick99", "f99"]:
+                ext = F99(Rv=rv)
+            elif law in ["ccm89"]:
+                ext = CCM89(Rv=rv)
+            elif law in ["odonnell94", "o94"]:
+                ext = O94(Rv=rv)
+            elif law in ["fitzpatrick04", "f04"]:
+                ext = F04(Rv=rv)
+            elif law in ["gordon16", "g16"]:
+                ext = G16(Rv=rv)
+            else:
+                raise ValueError(
+                    f"Unknown extinction law: {law}, use dust_extinction package directly or choose between 'Fitzpatrick99', 'CCM89', 'O94', 'F04', 'G16'"
+                )
+        else:
+            raise ValueError("Either law or ext must be specified but not both")
+
+        # Calculate the extinction curve (A_lambda / A(V)), then apply to flux
+        flux_reddened = self.y.value * ext.extinguish(self.x, Ebv=ebv)
+
+        if overwrite:
+            logger.debug("Overwrite spectrum with reddened flux values")
+            self._y = flux_reddened * self.y.unit
+            return self._y
+
+        elif new_spectrum:
+            logger.debug("Return new object with reddened flux values")
+            return Spectrum(
+                x=self.x,
+                y=flux_reddened * self.y.unit,
+                x_unit=self.x_unit,
+                y_unit=self.y_unit,
+                name=self.name,
+                vrad=self.vrad,
+            )
+        else:
+            return flux_reddened * self.y.unit
+
     def plot_velocity(
         self,
         x_rest,
@@ -1212,6 +1354,7 @@ class Spectrum(object):
         ax=None,
         fig_width=10,
         fig_height=4,
+        plot_yerr=False,
         **kwargs,
     ):
         """Function to plot the spectrum
@@ -1284,7 +1427,33 @@ class Spectrum(object):
             )
             raise ValueError
 
-        ax.plot(x, y + y_s, **kwargs)
+        if plot_yerr and (self._yerr is not None):
+            if y_unit is None:
+                yerr = self._yerr.to(y.unit, equivalencies=u.spectral())
+            else:
+                yerr = self._yerr.to(y_unit, equivalencies=u.spectral())
+
+            # Mask for non-nan error values
+            no_nan = ~np.isnan(yerr.value)
+            # Plot error bars where yerr is not nan
+            if np.any(no_nan):
+                ax.errorbar(
+                    x.value[no_nan],
+                    (y + y_s).value[no_nan],
+                    yerr=yerr.value[no_nan],
+                    fmt="o",
+                    **kwargs,
+                )
+            # Plot points where yerr is nan
+            if np.any(~no_nan):
+                ax.plot(
+                    x.value[~no_nan],
+                    (y + y_s).value[~no_nan],
+                    "o",
+                    **kwargs,
+                )
+        else:
+            ax.plot(x, y + y_s, **kwargs)
 
         # Change labels of x axis dependent on unit type
         if x.unit.physical_type == u.m.physical_type:

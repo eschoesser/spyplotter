@@ -19,12 +19,15 @@ setuptools.setup(
     include_package_data=True,
     install_requires=[
         "numpy",
+        "numba",
         "matplotlib",
         "ipympl",
         "scipy",
         "pandas",
         "astropy",
         "pathlib",
+        "setuptools",
         "typing",
+        "dust_extinction",
     ],
 )
