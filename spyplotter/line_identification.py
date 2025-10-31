@@ -56,7 +56,7 @@ class SpectralLine:
                 "wavelengths have wrong type. Make sure that it is a list/ tuple/ array like of floats."
             )
 
-        self.plotting_style = plotting_style_dict
+        self._plotting_style = plotting_style_dict
 
     @property
     def wavelengths(self):
@@ -68,6 +68,10 @@ class SpectralLine:
             [float(wavelength.value) for wavelength in sublist]
             for sublist in self._wavelengths
         ]
+
+    @property
+    def plotting_style(self):
+        return self._plotting_style
 
     @property
     def vrad(self):
@@ -160,6 +164,17 @@ class SpectralLine:
         }
 
 
+class ISMLine(SpectralLine):
+    """Class for ISM lines, which are not shifted by radial velocity"""
+
+    def __init__(self, ion_name, wavelengths, plotting_style_dict={}, x_unit=u.AA):
+        super().__init__(
+            ion_name, wavelengths, plotting_style_dict, x_unit, vrad=0 * u.km / u.s
+        )
+
+    # use voigt or Lorentz profile for ISM lines depending on input params given
+
+
 class LineIdentifier:
     # TODO: add units, possibility for unit adaptions,make sure it works even if entries of dict_lines have different units
     def __init__(self, spectral_lines={}, x_unit=None, vrad=0 * u.km / u.s):
@@ -221,9 +236,14 @@ class LineIdentifier:
     def vrad(self):
         return self._vrad
 
-    def update_plotting_style(self, ion_name, new_plotting_style):
+    def update_plotting_style_ion(self, ion_name, new_plotting_style):
         if ion_name in self._spectral_lines:
-            self._spectral_lines[ion_name].plotting_style = new_plotting_style
+            self._spectral_lines[ion_name].plotting_style.update(new_plotting_style)
+
+    def update_plotting_style_all(self, new_plotting_style):
+        for ion_name in self.ions:
+            if ion_name in self._spectral_lines:
+                self._spectral_lines[ion_name].plotting_style.update(new_plotting_style)
 
     def get_ion_lines(self, ion_name):
         # wavelengths of ion lines
@@ -397,7 +417,7 @@ class LineIdentifier:
 
     def plot(
         self,
-        base_yoff=1.02,
+        base_yoff=0.7,
         root=0.05,
         stem=0.05,
         stem_xoff_rel_cen=0,
