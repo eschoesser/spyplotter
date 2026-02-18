@@ -135,6 +135,24 @@ class Spectrum(object):
         # ToDo: when called at a specific x point, use spline or interpolation to evaluate flux at given point?
         return self.spectrum.T
 
+    def _get_init_kwargs(self):
+        """Return the keyword arguments that were used to initialize the spectrum
+
+        :return: keyword arguments
+        :rtype: dict
+        """
+        kwargs = {
+            "x": self._x,
+            "y": self._y,
+            "yerr": self._yerr,
+            "x_unit": self._x.unit,
+            "y_unit": self._y.unit,
+            "name": self.name,
+            "vrad": self._vrad,
+            "line_identifier": self._line_identifier,
+        }
+        return kwargs
+
     @property
     def spectrum(self) -> ArrayLike:
         """Convert spectrum in a 2D numpy array
@@ -282,7 +300,7 @@ class Spectrum(object):
                 logger.info("Reading formal.plot")
                 x, y = readWRPlotDatasets(path / "formal.plot", keywords, dataset)
         else:
-            logger.error("Path does not exist")
+            logger.error(f"Path ({path}) does not exist")
             raise ValueError
 
         if yunit is None:
@@ -341,7 +359,7 @@ class Spectrum(object):
         if path.exists():
             data = np.loadtxt(filename, **kwargs)
         else:
-            logger.error("Path does not exist")
+            logger.error(f"Path ({path}) does not exist")
             raise ValueError
 
         if len(data[0]) == 2:
@@ -371,13 +389,17 @@ class Spectrum(object):
         return sp
 
     @classmethod
-    def from_fits_eso(
+    def from_fits(
         cls,
         filepath,
         xunit: u.Unit = None,
         yunit: u.Unit = None,
         vrad=0.0 * u.km / u.s,
         bin_width: float = None,
+        read_error=True,
+        x_keyword="WAVELENGTH",
+        y_keyword="FLUX",
+        yerr_keyword="ERROR",
     ):
         """Read spectrum from an ESO data product fits file
         Takes into account that fitsf[1].data has multiple data sets
@@ -405,22 +427,38 @@ class Spectrum(object):
             fitsf = fits.open(path, ignore_missing_simple=True)
 
         else:
-            logger.error("Path does not exist")
+            logger.error(f"Path ({path}) does not exist")
             raise ValueError
 
         data = fitsf[1].data
         n_datasets = len(data)
-        err_upper = data["ERROR"]
+        if read_error:
+            err_upper = (
+                data[yerr_keyword]
+                if yerr_keyword in data.columns.names
+                else logger.error(f"Keyword {yerr_keyword} not found in fits file")
+            )
+        else:
+            logger.debug("Not reading error from fits file")
+            err_upper = None
         # err_lower = data['ERROR_LOWER']
-        flux = data["FLUX"]
-        lamb = data["WAVELENGTH"]
+        flux = (
+            data[y_keyword]
+            if y_keyword in data.columns.names
+            else logger.error(f"Keyword {y_keyword} not found in fits file")
+        )
+        lamb = (
+            data[x_keyword]
+            if x_keyword in data.columns.names
+            else logger.error(f"Keyword {x_keyword} not found in fits file")
+        )
 
         sp = cls(
             x=lamb[0][flux[0] > 0],
             x_unit=xunit,
             y=flux[0][flux[0] > 0],
             y_unit=yunit,
-            yerr=err_upper[0][flux[0] > 0],
+            yerr=err_upper[0][flux[0] > 0] if err_upper is not None else None,
             vrad=vrad,
         )
 
@@ -435,7 +473,11 @@ class Spectrum(object):
                     x_unit=xunit,
                     y=flux[i + 1][flux[i + 1] > 0],
                     y_unit=yunit,
-                    yerr=err_upper[i + 1][flux[i + 1] > 0],
+                    yerr=(
+                        err_upper[i + 1][flux[i + 1] > 0]
+                        if err_upper is not None
+                        else None
+                    ),
                     vrad=vrad,
                 )
                 sp = sp + sp2
@@ -476,7 +518,7 @@ class Spectrum(object):
             table = Table.read(path, format="votable")
 
         else:
-            logger.error("Path does not exist")
+            logger.error(f"Path ({path}) does not exist")
             raise ValueError
 
         freq = table["sed_freq"].data * u.GHz
@@ -560,6 +602,7 @@ class Spectrum(object):
             self._y = new_flux * self.y.unit
 
         elif new_spectrum:
+            kwargs = self._get_init_kwargs()
             # Return new object of spectrum
             logger.debug("Return broadened spectrum")
             return Spectrum(
@@ -740,6 +783,31 @@ class Spectrum(object):
 
         else:
             return doppler_shifted_x(self.x, vrad)
+
+    def apply_yshift(self, yshift, overwrite=False, new_spectrum=False):
+        """Apply a shift in flux to the spectrum, choose if spectrum is overwritten or new spectrum is returned
+
+        :param yshift: flux shift
+        :type yshift: float or astropy Quantity
+        """
+        if overwrite:
+            # Overwrite spectrum
+            logger.debug("Overwrite spectrum when applying flux shift")
+            self._y = self._y + yshift
+
+            return self._y
+
+        elif new_spectrum:
+            # Return new object of spectrum
+            logger.debug("Return new object with shifted y-values")
+
+            kwargs = self._get_init_kwargs()
+            kwargs["y"] = self._y + yshift
+
+            return Spectrum(**kwargs)
+
+        else:
+            return self._y + yshift
 
     def _get_segments(self, diff_factor=25):
         """
@@ -1047,7 +1115,11 @@ class Spectrum(object):
         if dx is None:
             dx = np.mean(np.diff(self._x.value))
         # Create a new x array with equally spaced values
-        x_new = np.arange(self._x.value[0], self._x.value[-1], dx) * self._x.unit
+        # Preserve the number of points from the original spectrum
+        n_points = len(self._x.value)
+        x_new = (
+            np.linspace(self._x.value[0], self._x.value[-1], n_points) * self._x.unit
+        )
         # Interpolate the y values to the new x values
         y_new = np.interp(x_new.value, self._x.value, self._y.value)
         # Create a new Spectrum object with the interpolated values
@@ -1186,6 +1258,55 @@ class Spectrum(object):
             )
         else:
             return flux_reddened * self.y.unit
+
+    def mask_region(
+        self, interval_fit=None, sp_ignore=None, overwrite=False, new_spectrum=True
+    ):
+        x_bef = self.x.value
+        y_bef = self.y.value
+        mask_ignore = np.ones_like(x_bef, dtype=bool)
+        if interval_fit is not None:
+            mask_ignore &= (x_bef > interval_fit[0]) & (x_bef < interval_fit[1])
+        # Update the mask based on the intervals to ignore
+        if sp_ignore is not None:
+            for interval in sp_ignore:
+                mask_ignore &= ~((x_bef >= interval[0]) & (x_bef <= interval[1]))
+
+        x_masked = x_bef.copy()
+        y_masked = y_bef.copy()
+
+        x_masked = x_masked[mask_ignore]
+        y_masked = y_masked[mask_ignore]
+
+        if self.yerr is None:
+            yerr_masked = None
+        else:
+            yerr_bef = self.yerr.value
+            yerr_masked = yerr_bef.copy()
+            yerr_masked = yerr_masked[mask_ignore]
+
+        if overwrite:
+            logger.debug("Overwrite spectrum with masked values")
+            self._x = SpectralCoord(x_masked * self.x.unit)
+            self._y = y_masked * self.y.unit
+            if self.yerr is not None:
+                self._yerr = yerr_masked * self.yerr.unit
+            return self
+        elif new_spectrum:
+            logger.debug("Return new object with masked values")
+            return Spectrum(
+                x=x_masked * self.x.unit,
+                y=y_masked * self.y.unit,
+                yerr=yerr_masked * self.yerr.unit if self.yerr is not None else None,
+                name=self.name,
+                vrad=self.vrad,
+            )
+        else:
+            return (
+                x_masked * self.x.unit,
+                y_masked * self.y.unit,
+                yerr_masked * self.yerr.unit if self.yerr is not None else None,
+            )
 
     def plot_velocity(
         self,
@@ -1550,17 +1671,7 @@ class Spectrum(object):
         :return: figure
         """
         # ToDo maybe: Check if intervals have the right shape (x,2) or (2,)
-        if ax is None:
-            if isinstance(intervals, int):
-                # if it's of type int, divide x in n intervals given by integer
-                intervals = np.array(
-                    generate_intervals(
-                        interval_start=np.min(self.x_in_unit(x_unit).value),
-                        interval_end=np.max(self.x_in_unit(x_unit).value),
-                        n_int=intervals,
-                    )
-                )
-        else:
+        if ax is not None:
             if np.shape(ax) == ():
                 # only one axis, no zoom plot but should still not result in error
                 intervals = np.array(ax.get_xlim())
@@ -1571,6 +1682,15 @@ class Spectrum(object):
                 logger.warning(
                     f"Using following intervals from pre-set values in figure given by ax: \n\t{intervals}"
                 )
+        if isinstance(intervals, int):
+            # if it's of type int, divide x in n intervals given by integer
+            intervals = np.array(
+                generate_intervals(
+                    interval_start=np.min(self.x_in_unit(x_unit).value),
+                    interval_end=np.max(self.x_in_unit(x_unit).value),
+                    n_int=intervals,
+                )
+            )
 
         if ((len(np.shape(intervals)) == 2) and (np.shape(intervals)[-1] == 2)) and len(
             intervals
