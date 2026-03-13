@@ -592,11 +592,15 @@ class PoWRModel(Model):
         if all_ions_in_one_plot:
             plot_other_accelerations(ax, **kwargs)
             ax.legend(ncol=n_cols_legend)
+            ax.set_xlabel(r"$\log_{10} (r / R_* - 1)$")
+            ax.set_ylabel(r"$\log_{10} (a / g)$")
             return ax
         else:
             for ax in axes:
                 plot_other_accelerations(ax, **kwargs)
                 ax.legend(ncol=n_cols_legend)
+                ax.set_xlabel(r"$\log_{10} (r / R_* - 1)$")
+                ax.set_ylabel(r"$\log_{10} (a / g)$")
             return axes
 
     def plot_velocity_stratification(self, ax=None, **kwargs):
