@@ -21,6 +21,7 @@ from .spec_tools.unit_checks import (
     check_velocity_unit,
     check_x_unit,
     check_y_unit,
+    check_distance_unit,
     doppler_shifted_x,
 )
 
@@ -135,6 +136,24 @@ class Spectrum(object):
         # ToDo: when called at a specific x point, use spline or interpolation to evaluate flux at given point?
         return self.spectrum.T
 
+    def _get_init_kwargs(self):
+        """Return the keyword arguments that were used to initialize the spectrum
+
+        :return: keyword arguments
+        :rtype: dict
+        """
+        kwargs = {
+            "x": self._x,
+            "y": self._y,
+            "yerr": self._yerr,
+            "x_unit": self._x.unit,
+            "y_unit": self._y.unit,
+            "name": self.name,
+            "vrad": self._vrad,
+            "line_identifier": self._line_identifier,
+        }
+        return kwargs
+
     @property
     def spectrum(self) -> ArrayLike:
         """Convert spectrum in a 2D numpy array
@@ -243,8 +262,8 @@ class Spectrum(object):
         filepath,
         keywords: List[int] = [""],
         dataset: int = 1,
-        xunit: u.Unit = None,
-        yunit: u.Unit = None,
+        x_unit: u.Unit = None,
+        y_unit: u.Unit = None,
         name=None,
         vrad=0.0 * u.km / u.s,
         bin_width: float = None,
@@ -258,10 +277,10 @@ class Spectrum(object):
         :type keywords: List[int], optional
         :param dataset: number of data set that is read, defaults to 1
         :type dataset: int, optional
-        :param xunit: unit of x_values, defaults to None (later Angstrom)
-        :type xunit: u.Unit, optional
-        :param yunit: unit of y values, defaults to None (later normalized)
-        :type yunit: u.Unit, optional
+        :param x_unit: unit of x_values, defaults to None (later Angstrom)
+        :type x_unit: u.Unit, optional
+        :param y_unit: unit of y values, defaults to None (later normalized)
+        :type y_unit: u.Unit, optional
         :param name: name of spectrum, defaults to None
         :type name: string, optional
         :param vrad: radial velocity that should be applied to spectrum, defaults to 0.*u.km/u.s
@@ -282,25 +301,25 @@ class Spectrum(object):
                 logger.info("Reading formal.plot")
                 x, y = readWRPlotDatasets(path / "formal.plot", keywords, dataset)
         else:
-            logger.error("Path does not exist")
+            logger.error(f"Path ({path}) does not exist")
             raise ValueError
 
-        if yunit is None:
+        if y_unit is None:
             # search for signs of a flux calibrated spectrum, otherwise assume normalized spectrum
             if (
                 ("CONTINUUM" in keywords[0]) or ("EMERGENT" in keywords[0])
             ) or dataset > 1:
-                yunit = u.erg / u.s / u.cm**2 / u.AA
+                y_unit = u.erg / u.s / u.cm**2 / u.AA
                 logger.info(
-                    f"Flux calibrated spectrum at 10 pc. Thus using {yunit} as y unit."
+                    f"Flux calibrated spectrum at 10 pc. Thus using {y_unit} as y unit."
                 )
             else:
                 logger.info(
                     "No flux unit specified and no signs for y units detected. Thus assuming normalized spectum."
                 )
-                yunit = None
+                y_unit = None
 
-        sp = cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=0)
+        sp = cls(x=x, y=y, x_unit=x_unit, y_unit=y_unit, name=name, vrad=0)
         if bin_width is not None:
             sp.bin(bin_width=bin_width, overwrite=True)
         if vrad.value != 0:
@@ -312,8 +331,8 @@ class Spectrum(object):
     def from_file(
         cls,
         filename,
-        xunit: u.Unit = None,
-        yunit: u.Unit = None,
+        x_unit: u.Unit = None,
+        y_unit: u.Unit = None,
         name: str = None,
         vrad=0.0 * u.km / u.s,
         bin_width: float = None,
@@ -327,10 +346,10 @@ class Spectrum(object):
         :type skiprows: int, optional
         :param delimiter: delimiter between values in table of file, defaults to whitespace ' '
         :type delimiter: str, optional
-        :param xunit: astropy unit of x, defaults to None
-        :type xunit: u.Unit, optional
-        :param yunit: y unit, defaults to None
-        :type yunit: u.Unit, optional
+        :param x_unit: astropy unit of x, defaults to None
+        :type x_unit: u.Unit, optional
+        :param y_unit: y unit, defaults to None
+        :type y_unit: u.Unit, optional
         :param name: name of spectrum, defaults to None
         :type name: str, optional
         :raises ValueError: if path of given file does not exist
@@ -341,7 +360,7 @@ class Spectrum(object):
         if path.exists():
             data = np.loadtxt(filename, **kwargs)
         else:
-            logger.error("Path does not exist")
+            logger.error(f"Path ({path}) does not exist")
             raise ValueError
 
         if len(data[0]) == 2:
@@ -357,8 +376,8 @@ class Spectrum(object):
             x=data[:, 0],
             y=data[:, 1],
             yerr=yerr,
-            x_unit=xunit,
-            y_unit=yunit,
+            x_unit=x_unit,
+            y_unit=y_unit,
             name=name,
             vrad=vrad,
         )
@@ -371,13 +390,17 @@ class Spectrum(object):
         return sp
 
     @classmethod
-    def from_fits_eso(
+    def from_fits(
         cls,
         filepath,
-        xunit: u.Unit = None,
-        yunit: u.Unit = None,
+        x_unit: u.Unit = None,
+        y_unit: u.Unit = None,
         vrad=0.0 * u.km / u.s,
         bin_width: float = None,
+        read_error=True,
+        x_keyword="WAVELENGTH",
+        y_keyword="FLUX",
+        yerr_keyword="ERROR",
     ):
         """Read spectrum from an ESO data product fits file
         Takes into account that fitsf[1].data has multiple data sets
@@ -385,10 +408,10 @@ class Spectrum(object):
         :param filepath: path of file, if only path is given and not concrete file, try to open formal.plot
                         Otherwise: open specified file
         :type filepath: string or Path (file or directory)
-        :param xunit: unit of x_values, defaults to None (later Angstrom)
-        :type xunit: u.Unit, optional
-        :param yunit: unit of y values, defaults to None (later normalized)
-        :type yunit: u.Unit, optional
+        :param x_unit: unit of x_values, defaults to None (later Angstrom)
+        :type x_unit: u.Unit, optional
+        :param y_unit: unit of y values, defaults to None (later normalized)
+        :type y_unit: u.Unit, optional
         :param name: name of spectrum, defaults to None
         :type name: string, optional
         :param vrad: radial velocity that should be applied to spectrum, defaults to 0.*u.km/u.s
@@ -405,22 +428,38 @@ class Spectrum(object):
             fitsf = fits.open(path, ignore_missing_simple=True)
 
         else:
-            logger.error("Path does not exist")
+            logger.error(f"Path ({path}) does not exist")
             raise ValueError
 
         data = fitsf[1].data
         n_datasets = len(data)
-        err_upper = data["ERROR"]
+        if read_error:
+            err_upper = (
+                data[yerr_keyword]
+                if yerr_keyword in data.columns.names
+                else logger.error(f"Keyword {yerr_keyword} not found in fits file")
+            )
+        else:
+            logger.debug("Not reading error from fits file")
+            err_upper = None
         # err_lower = data['ERROR_LOWER']
-        flux = data["FLUX"]
-        lamb = data["WAVELENGTH"]
+        flux = (
+            data[y_keyword]
+            if y_keyword in data.columns.names
+            else logger.error(f"Keyword {y_keyword} not found in fits file")
+        )
+        lamb = (
+            data[x_keyword]
+            if x_keyword in data.columns.names
+            else logger.error(f"Keyword {x_keyword} not found in fits file")
+        )
 
         sp = cls(
             x=lamb[0][flux[0] > 0],
-            x_unit=xunit,
+            x_unit=x_unit,
             y=flux[0][flux[0] > 0],
-            y_unit=yunit,
-            yerr=err_upper[0][flux[0] > 0],
+            y_unit=y_unit,
+            yerr=err_upper[0][flux[0] > 0] if err_upper is not None else None,
             vrad=vrad,
         )
 
@@ -432,13 +471,19 @@ class Spectrum(object):
             for i in range(n_datasets - 1):
                 sp2 = cls(
                     x=lamb[i + 1][flux[i + 1] > 0],
-                    x_unit=xunit,
+                    x_unit=x_unit,
                     y=flux[i + 1][flux[i + 1] > 0],
-                    y_unit=yunit,
-                    yerr=err_upper[i + 1][flux[i + 1] > 0],
+                    y_unit=y_unit,
+                    yerr=(
+                        err_upper[i + 1][flux[i + 1] > 0]
+                        if err_upper is not None
+                        else None
+                    ),
                     vrad=vrad,
                 )
                 sp = sp + sp2
+        elif n_datasets == 0:
+            logger.warning("No data sets found in fits file")
 
         if bin_width is not None:
             sp.bin(bin_width=bin_width, overwrite=True)
@@ -452,7 +497,7 @@ class Spectrum(object):
         cls,
         filepath,
         x_unit_out=u.AA,
-        y_unit_out=u.mJy,
+        y_unit_out=u.erg / u.AA / u.s / (u.cm**2),
         name: str = None,
         vrad=0.0 * u.km / u.s,
     ):
@@ -476,7 +521,7 @@ class Spectrum(object):
             table = Table.read(path, format="votable")
 
         else:
-            logger.error("Path does not exist")
+            logger.error(f"Path ({path}) does not exist")
             raise ValueError
 
         freq = table["sed_freq"].data * u.GHz
@@ -485,11 +530,14 @@ class Spectrum(object):
         logger.debug(
             f"Assuming x (frequency) unit: {freq.unit}, flux and flux error unit: {flux.unit}"
         )
-
+        x = freq.to(x_unit_out, equivalencies=u.spectral())
         return cls(
-            x=freq.to(x_unit_out, equivalencies=u.spectral()),
-            y=flux.to(y_unit_out),
-            yerr=flux_error.to(y_unit_out),
+            x=x,
+            y=flux.to(
+                y_unit_out,
+                equivalencies=u.spectral_density(x),
+            ),
+            yerr=flux_error.to(y_unit_out, equivalencies=u.spectral_density(x)),
             name=name,
             vrad=vrad,
         )
@@ -560,6 +608,7 @@ class Spectrum(object):
             self._y = new_flux * self.y.unit
 
         elif new_spectrum:
+            kwargs = self._get_init_kwargs()
             # Return new object of spectrum
             logger.debug("Return broadened spectrum")
             return Spectrum(
@@ -697,7 +746,8 @@ class Spectrum(object):
 
         if y_unit is not None:
             logger.debug(f"The unit of all y values is changed to {y_unit}")
-            self._x = self._y.to(y_unit, equivalencies=u.spectral())
+            # Implement such that conversion to Jy from erg/s/cm^2/A is possible and vice versa, as this is a common conversion for spectra
+            self._y = self._y.to(y_unit, equivalencies=u.spectral_density(self.x))
 
     def apply_shift_vrad(self, vrad, overwrite=False, new_spectrum=False):
         """Apply radial shift to spectrum, choose if spectrum is overwritten or new spectrum is returned
@@ -740,6 +790,31 @@ class Spectrum(object):
 
         else:
             return doppler_shifted_x(self.x, vrad)
+
+    def apply_yshift(self, yshift, overwrite=False, new_spectrum=False):
+        """Apply a shift in flux to the spectrum, choose if spectrum is overwritten or new spectrum is returned
+
+        :param yshift: flux shift
+        :type yshift: float or astropy Quantity
+        """
+        if overwrite:
+            # Overwrite spectrum
+            logger.debug("Overwrite spectrum when applying flux shift")
+            self._y = self._y + yshift
+
+            return self._y
+
+        elif new_spectrum:
+            # Return new object of spectrum
+            logger.debug("Return new object with shifted y-values")
+
+            kwargs = self._get_init_kwargs()
+            kwargs["y"] = self._y + yshift
+
+            return Spectrum(**kwargs)
+
+        else:
+            return self._y + yshift
 
     def _get_segments(self, diff_factor=25):
         """
@@ -1047,7 +1122,11 @@ class Spectrum(object):
         if dx is None:
             dx = np.mean(np.diff(self._x.value))
         # Create a new x array with equally spaced values
-        x_new = np.arange(self._x.value[0], self._x.value[-1], dx) * self._x.unit
+        # Preserve the number of points from the original spectrum
+        n_points = len(self._x.value)
+        x_new = (
+            np.linspace(self._x.value[0], self._x.value[-1], n_points) * self._x.unit
+        )
         # Interpolate the y values to the new x values
         y_new = np.interp(x_new.value, self._x.value, self._y.value)
         # Create a new Spectrum object with the interpolated values
@@ -1123,7 +1202,8 @@ class Spectrum(object):
         :type ebv: float
         :param r_v: R_V value for reddening, defaults to 3.1
         :type r_v: float, optional
-        :param law: extinction law as string, see `dust_extinction package` for options,
+        :param law: extinction law as string, available options: 'Fitzpatrick99' or f99 (MW), 'CCM89' (MW), 'O94' (MW), 'F04' (MW center), 'G16' (LMC, SMC),
+
                     defaults to 'Fitzpatrick99'
         :type law: str, optional
         :param overwrite: if True, overwrite the current spectrum, defaults to False
@@ -1158,7 +1238,7 @@ class Spectrum(object):
             elif law in ["fitzpatrick04", "f04"]:
                 ext = F04(Rv=rv)
             elif law in ["gordon16", "g16"]:
-                ext = G16(Rv=rv)
+                ext = G16(RvA=rv)
             else:
                 raise ValueError(
                     f"Unknown extinction law: {law}, use dust_extinction package directly or choose between 'Fitzpatrick99', 'CCM89', 'O94', 'F04', 'G16'"
@@ -1186,6 +1266,92 @@ class Spectrum(object):
             )
         else:
             return flux_reddened * self.y.unit
+
+    def mask_region(
+        self, interval_fit=None, sp_ignore=None, overwrite=False, new_spectrum=True
+    ):
+        x_bef = self.x.value
+        y_bef = self.y.value
+        mask_ignore = np.ones_like(x_bef, dtype=bool)
+        if interval_fit is not None:
+            mask_ignore &= (x_bef > interval_fit[0]) & (x_bef < interval_fit[1])
+        # Update the mask based on the intervals to ignore
+        if sp_ignore is not None:
+            for interval in sp_ignore:
+                mask_ignore &= ~((x_bef >= interval[0]) & (x_bef <= interval[1]))
+
+        x_masked = x_bef.copy()
+        y_masked = y_bef.copy()
+
+        x_masked = x_masked[mask_ignore]
+        y_masked = y_masked[mask_ignore]
+
+        if self.yerr is None:
+            yerr_masked = None
+        else:
+            yerr_bef = self.yerr.value
+            yerr_masked = yerr_bef.copy()
+            yerr_masked = yerr_masked[mask_ignore]
+
+        if overwrite:
+            logger.debug("Overwrite spectrum with masked values")
+            self._x = SpectralCoord(x_masked * self.x.unit)
+            self._y = y_masked * self.y.unit
+            if self.yerr is not None:
+                self._yerr = yerr_masked * self.yerr.unit
+            return self
+        elif new_spectrum:
+            logger.debug("Return new object with masked values")
+            return Spectrum(
+                x=x_masked * self.x.unit,
+                y=y_masked * self.y.unit,
+                yerr=yerr_masked * self.yerr.unit if self.yerr is not None else None,
+                name=self.name,
+                vrad=self.vrad,
+            )
+        else:
+            return (
+                x_masked * self.x.unit,
+                y_masked * self.y.unit,
+                yerr_masked * self.yerr.unit if self.yerr is not None else None,
+            )
+
+    def scale_to_distance(
+        self, to_distance, from_distance=10 * u.pc, overwrite=False, new_spectrum=False
+    ):
+        """Scale the flux of the spectrum to a different distance using the inverse square law
+
+        :param to_distance: distance to which the spectrum should be scaled
+        :type to_distance: float or astropy Quantity
+        :param from_distance: distance from which the spectrum should be scaled, defaults to 10*pc
+        :type from_distance: float or astropy Quantity, optional
+        :param overwrite: if True, overwrite the current spectrum, defaults to False
+        :type overwrite: bool, optional
+        :param new_spectrum: if True, return a new spectrum object, defaults to False
+        :type new_spectrum: bool, optional
+        :return: scaled spectrum or new Spectrum object
+        :rtype: Spectrum or ArrayLike
+        """
+        # check and set distance units
+        to_distance = check_distance_unit(to_distance)
+        from_distance = check_distance_unit(from_distance)
+
+        # Calculate scaling factor using inverse square law
+        y = (self._y * (from_distance / to_distance) ** 2).to(self._y.unit)
+
+        if overwrite:
+            logger.debug("Overwrite spectrum with scaled flux values")
+            self._y = y
+            return self._y
+
+        elif new_spectrum:
+            kwargs = self._get_init_kwargs()
+            kwargs["y"] = y
+
+            logger.debug("Return new object with scaled flux values")
+            return Spectrum(**kwargs)
+        else:
+            return y
 
     def plot_velocity(
         self,
@@ -1550,17 +1716,7 @@ class Spectrum(object):
         :return: figure
         """
         # ToDo maybe: Check if intervals have the right shape (x,2) or (2,)
-        if ax is None:
-            if isinstance(intervals, int):
-                # if it's of type int, divide x in n intervals given by integer
-                intervals = np.array(
-                    generate_intervals(
-                        interval_start=np.min(self.x_in_unit(x_unit).value),
-                        interval_end=np.max(self.x_in_unit(x_unit).value),
-                        n_int=intervals,
-                    )
-                )
-        else:
+        if ax is not None:
             if np.shape(ax) == ():
                 # only one axis, no zoom plot but should still not result in error
                 intervals = np.array(ax.get_xlim())
@@ -1571,6 +1727,15 @@ class Spectrum(object):
                 logger.warning(
                     f"Using following intervals from pre-set values in figure given by ax: \n\t{intervals}"
                 )
+        if isinstance(intervals, int):
+            # if it's of type int, divide x in n intervals given by integer
+            intervals = np.array(
+                generate_intervals(
+                    interval_start=np.min(self.x_in_unit(x_unit).value),
+                    interval_end=np.max(self.x_in_unit(x_unit).value),
+                    n_int=intervals,
+                )
+            )
 
         if ((len(np.shape(intervals)) == 2) and (np.shape(intervals)[-1] == 2)) and len(
             intervals

@@ -417,7 +417,7 @@ class LineIdentifier:
 
     def plot(
         self,
-        base_yoff=0.7,
+        base_yoff=0.9,
         root=0.05,
         stem=0.05,
         stem_xoff_rel_cen=0,
@@ -521,37 +521,51 @@ class LineIdentifier:
         # vertical stem lines connecting to text label
         ax.vlines(stem_lamb, ymin, ymax, **line_kwargs)
 
-        # Estimate text height from fontsize (in data coordinates)
-        fontsize = text_kwargs.get("fontsize")
-        # This is a rough estimate; you can tune the multiplier if needed
-        estimated_text_height = fontsize * 0.002 * y_range
-
         # print text labels
         i = 0
         y_text = ymax + text_yoff_scaled
+        text_objects = []
+
         for line in self.spectral_lines.values():
             font_dict = text_kwargs.copy()
             font_dict.update(line.plotting_style)
+
             for wavel in line.wavelengths:
-                # check if any of the wavel within xlim of axis
                 if xlim is not None:
                     cond = (max(wavel).value > xlim[0]) and (min(wavel).value < xlim[1])
                 else:
                     cond = True
 
-                # plot only text if wavel within xlim (saves time)
-                if cond == True:
-                    text_object = ax.text(
-                        stem_lamb[i], y_text, s=line.ion_name, fontdict=font_dict
+                if cond:
+                    txt = ax.text(
+                        stem_lamb[i],
+                        y_text,
+                        s=line.ion_name,
+                        fontdict=font_dict,
+                        clip_on=True,  # important
                     )
+                    text_objects.append(txt)
+
                 i += 1
 
-        # coordinates of text of labels
+        # --- force a draw so text positions are known ---
+        fig = ax.figure
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+
+        # --- compute max text top in data coordinates ---
+        ymax_text = -np.inf
+        for txt in text_objects:
+            bbox = txt.get_window_extent(renderer=renderer)
+            bbox_data = bbox.transformed(ax.transData.inverted())
+            ymax_text = max(ymax_text, bbox_data.y1)
+
+        # --- adapt ylim if needed ---
         _, ymax = ax.get_ylim()
-        ymax_text = y_text + estimated_text_height
         if ymax < ymax_text:
             logger.warning(
-                f"Text out of ylim, automatically adapting ymax now from ymax_old={ymax:.2f} to ymax_new={1.05 * ymax_text:.2f}"
+                f"Text out of ylim, automatically adapting ymax now from "
+                f"ymax_old={ymax:.2f} to ymax_new={1.05 * ymax_text:.2f}"
             )
             ax.set_ylim(None, 1.05 * ymax_text)
 
