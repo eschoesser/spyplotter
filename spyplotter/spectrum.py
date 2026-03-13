@@ -21,6 +21,7 @@ from .spec_tools.unit_checks import (
     check_velocity_unit,
     check_x_unit,
     check_y_unit,
+    check_distance_unit,
     doppler_shifted_x,
 )
 
@@ -261,8 +262,8 @@ class Spectrum(object):
         filepath,
         keywords: List[int] = [""],
         dataset: int = 1,
-        xunit: u.Unit = None,
-        yunit: u.Unit = None,
+        x_unit: u.Unit = None,
+        y_unit: u.Unit = None,
         name=None,
         vrad=0.0 * u.km / u.s,
         bin_width: float = None,
@@ -276,10 +277,10 @@ class Spectrum(object):
         :type keywords: List[int], optional
         :param dataset: number of data set that is read, defaults to 1
         :type dataset: int, optional
-        :param xunit: unit of x_values, defaults to None (later Angstrom)
-        :type xunit: u.Unit, optional
-        :param yunit: unit of y values, defaults to None (later normalized)
-        :type yunit: u.Unit, optional
+        :param x_unit: unit of x_values, defaults to None (later Angstrom)
+        :type x_unit: u.Unit, optional
+        :param y_unit: unit of y values, defaults to None (later normalized)
+        :type y_unit: u.Unit, optional
         :param name: name of spectrum, defaults to None
         :type name: string, optional
         :param vrad: radial velocity that should be applied to spectrum, defaults to 0.*u.km/u.s
@@ -303,22 +304,22 @@ class Spectrum(object):
             logger.error(f"Path ({path}) does not exist")
             raise ValueError
 
-        if yunit is None:
+        if y_unit is None:
             # search for signs of a flux calibrated spectrum, otherwise assume normalized spectrum
             if (
                 ("CONTINUUM" in keywords[0]) or ("EMERGENT" in keywords[0])
             ) or dataset > 1:
-                yunit = u.erg / u.s / u.cm**2 / u.AA
+                y_unit = u.erg / u.s / u.cm**2 / u.AA
                 logger.info(
-                    f"Flux calibrated spectrum at 10 pc. Thus using {yunit} as y unit."
+                    f"Flux calibrated spectrum at 10 pc. Thus using {y_unit} as y unit."
                 )
             else:
                 logger.info(
                     "No flux unit specified and no signs for y units detected. Thus assuming normalized spectum."
                 )
-                yunit = None
+                y_unit = None
 
-        sp = cls(x=x, y=y, x_unit=xunit, y_unit=yunit, name=name, vrad=0)
+        sp = cls(x=x, y=y, x_unit=x_unit, y_unit=y_unit, name=name, vrad=0)
         if bin_width is not None:
             sp.bin(bin_width=bin_width, overwrite=True)
         if vrad.value != 0:
@@ -330,8 +331,8 @@ class Spectrum(object):
     def from_file(
         cls,
         filename,
-        xunit: u.Unit = None,
-        yunit: u.Unit = None,
+        x_unit: u.Unit = None,
+        y_unit: u.Unit = None,
         name: str = None,
         vrad=0.0 * u.km / u.s,
         bin_width: float = None,
@@ -345,10 +346,10 @@ class Spectrum(object):
         :type skiprows: int, optional
         :param delimiter: delimiter between values in table of file, defaults to whitespace ' '
         :type delimiter: str, optional
-        :param xunit: astropy unit of x, defaults to None
-        :type xunit: u.Unit, optional
-        :param yunit: y unit, defaults to None
-        :type yunit: u.Unit, optional
+        :param x_unit: astropy unit of x, defaults to None
+        :type x_unit: u.Unit, optional
+        :param y_unit: y unit, defaults to None
+        :type y_unit: u.Unit, optional
         :param name: name of spectrum, defaults to None
         :type name: str, optional
         :raises ValueError: if path of given file does not exist
@@ -375,8 +376,8 @@ class Spectrum(object):
             x=data[:, 0],
             y=data[:, 1],
             yerr=yerr,
-            x_unit=xunit,
-            y_unit=yunit,
+            x_unit=x_unit,
+            y_unit=y_unit,
             name=name,
             vrad=vrad,
         )
@@ -392,8 +393,8 @@ class Spectrum(object):
     def from_fits(
         cls,
         filepath,
-        xunit: u.Unit = None,
-        yunit: u.Unit = None,
+        x_unit: u.Unit = None,
+        y_unit: u.Unit = None,
         vrad=0.0 * u.km / u.s,
         bin_width: float = None,
         read_error=True,
@@ -407,10 +408,10 @@ class Spectrum(object):
         :param filepath: path of file, if only path is given and not concrete file, try to open formal.plot
                         Otherwise: open specified file
         :type filepath: string or Path (file or directory)
-        :param xunit: unit of x_values, defaults to None (later Angstrom)
-        :type xunit: u.Unit, optional
-        :param yunit: unit of y values, defaults to None (later normalized)
-        :type yunit: u.Unit, optional
+        :param x_unit: unit of x_values, defaults to None (later Angstrom)
+        :type x_unit: u.Unit, optional
+        :param y_unit: unit of y values, defaults to None (later normalized)
+        :type y_unit: u.Unit, optional
         :param name: name of spectrum, defaults to None
         :type name: string, optional
         :param vrad: radial velocity that should be applied to spectrum, defaults to 0.*u.km/u.s
@@ -455,9 +456,9 @@ class Spectrum(object):
 
         sp = cls(
             x=lamb[0][flux[0] > 0],
-            x_unit=xunit,
+            x_unit=x_unit,
             y=flux[0][flux[0] > 0],
-            y_unit=yunit,
+            y_unit=y_unit,
             yerr=err_upper[0][flux[0] > 0] if err_upper is not None else None,
             vrad=vrad,
         )
@@ -470,9 +471,9 @@ class Spectrum(object):
             for i in range(n_datasets - 1):
                 sp2 = cls(
                     x=lamb[i + 1][flux[i + 1] > 0],
-                    x_unit=xunit,
+                    x_unit=x_unit,
                     y=flux[i + 1][flux[i + 1] > 0],
-                    y_unit=yunit,
+                    y_unit=y_unit,
                     yerr=(
                         err_upper[i + 1][flux[i + 1] > 0]
                         if err_upper is not None
@@ -481,6 +482,8 @@ class Spectrum(object):
                     vrad=vrad,
                 )
                 sp = sp + sp2
+        elif n_datasets == 0:
+            logger.warning("No data sets found in fits file")
 
         if bin_width is not None:
             sp.bin(bin_width=bin_width, overwrite=True)
@@ -494,7 +497,7 @@ class Spectrum(object):
         cls,
         filepath,
         x_unit_out=u.AA,
-        y_unit_out=u.mJy,
+        y_unit_out=u.erg / u.AA / u.s / (u.cm**2),
         name: str = None,
         vrad=0.0 * u.km / u.s,
     ):
@@ -527,11 +530,14 @@ class Spectrum(object):
         logger.debug(
             f"Assuming x (frequency) unit: {freq.unit}, flux and flux error unit: {flux.unit}"
         )
-
+        x = freq.to(x_unit_out, equivalencies=u.spectral())
         return cls(
-            x=freq.to(x_unit_out, equivalencies=u.spectral()),
-            y=flux.to(y_unit_out),
-            yerr=flux_error.to(y_unit_out),
+            x=x,
+            y=flux.to(
+                y_unit_out,
+                equivalencies=u.spectral_density(x),
+            ),
+            yerr=flux_error.to(y_unit_out, equivalencies=u.spectral_density(x)),
             name=name,
             vrad=vrad,
         )
@@ -740,7 +746,8 @@ class Spectrum(object):
 
         if y_unit is not None:
             logger.debug(f"The unit of all y values is changed to {y_unit}")
-            self._x = self._y.to(y_unit, equivalencies=u.spectral())
+            # Implement such that conversion to Jy from erg/s/cm^2/A is possible and vice versa, as this is a common conversion for spectra
+            self._y = self._y.to(y_unit, equivalencies=u.spectral_density(self.x))
 
     def apply_shift_vrad(self, vrad, overwrite=False, new_spectrum=False):
         """Apply radial shift to spectrum, choose if spectrum is overwritten or new spectrum is returned
@@ -1195,7 +1202,8 @@ class Spectrum(object):
         :type ebv: float
         :param r_v: R_V value for reddening, defaults to 3.1
         :type r_v: float, optional
-        :param law: extinction law as string, see `dust_extinction package` for options,
+        :param law: extinction law as string, available options: 'Fitzpatrick99' or f99 (MW), 'CCM89' (MW), 'O94' (MW), 'F04' (MW center), 'G16' (LMC, SMC),
+
                     defaults to 'Fitzpatrick99'
         :type law: str, optional
         :param overwrite: if True, overwrite the current spectrum, defaults to False
@@ -1230,7 +1238,7 @@ class Spectrum(object):
             elif law in ["fitzpatrick04", "f04"]:
                 ext = F04(Rv=rv)
             elif law in ["gordon16", "g16"]:
-                ext = G16(Rv=rv)
+                ext = G16(RvA=rv)
             else:
                 raise ValueError(
                     f"Unknown extinction law: {law}, use dust_extinction package directly or choose between 'Fitzpatrick99', 'CCM89', 'O94', 'F04', 'G16'"
@@ -1307,6 +1315,43 @@ class Spectrum(object):
                 y_masked * self.y.unit,
                 yerr_masked * self.yerr.unit if self.yerr is not None else None,
             )
+
+    def scale_to_distance(
+        self, to_distance, from_distance=10 * u.pc, overwrite=False, new_spectrum=False
+    ):
+        """Scale the flux of the spectrum to a different distance using the inverse square law
+
+        :param to_distance: distance to which the spectrum should be scaled
+        :type to_distance: float or astropy Quantity
+        :param from_distance: distance from which the spectrum should be scaled, defaults to 10*pc
+        :type from_distance: float or astropy Quantity, optional
+        :param overwrite: if True, overwrite the current spectrum, defaults to False
+        :type overwrite: bool, optional
+        :param new_spectrum: if True, return a new spectrum object, defaults to False
+        :type new_spectrum: bool, optional
+        :return: scaled spectrum or new Spectrum object
+        :rtype: Spectrum or ArrayLike
+        """
+        # check and set distance units
+        to_distance = check_distance_unit(to_distance)
+        from_distance = check_distance_unit(from_distance)
+
+        # Calculate scaling factor using inverse square law
+        y = (self._y * (from_distance / to_distance) ** 2).to(self._y.unit)
+
+        if overwrite:
+            logger.debug("Overwrite spectrum with scaled flux values")
+            self._y = y
+            return self._y
+
+        elif new_spectrum:
+            kwargs = self._get_init_kwargs()
+            kwargs["y"] = y
+
+            logger.debug("Return new object with scaled flux values")
+            return Spectrum(**kwargs)
+        else:
+            return y
 
     def plot_velocity(
         self,

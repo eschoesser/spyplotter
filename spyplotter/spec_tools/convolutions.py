@@ -362,30 +362,32 @@ def macroturbulence_broaden_chunks(
 
     # Global extension of wavelength and flux to avoid edge effects
     pad = int(np.ceil(vc * np.max(wavelength) / bin_width)) + 1
+
+    # Create wavelength padding arrays
+    wave_pad_left = np.linspace(
+        wavelength[0] - pad * bin_width, wavelength[0] - bin_width, pad
+    )
+    wave_pad_right = np.linspace(
+        wavelength[-1] + bin_width, wavelength[-1] + pad * bin_width, pad
+    )
+
     if edge_handling == "firstlast":
         # extend the spectrum by padding it with the first and last values
         # makes sense for non-normalized spectra which will be extended by continuum values on edges
         flux_ext = np.concatenate([np.full(pad, flux[0]), flux, np.full(pad, flux[-1])])
-        wave_ext = np.concatenate(
-            [
-                wavelength[0] + bin_width * np.arange(-pad, 0),
-                wavelength,
-                wavelength[-1] + bin_width * np.arange(1, pad + 1),
-            ]
-        )
+        wave_ext = np.concatenate([wave_pad_left, wavelength, wave_pad_right])
     elif edge_handling == "normalized":
         # extend the spectrum by padding it with 1 on both sides
         # makes sense for normalized spectra which will be extended by continuum (1.0) values on edges
         flux_ext = np.concatenate([np.full(pad, 1.0), flux, np.full(pad, 1.0)])
-        wave_ext = np.concatenate(
-            [
-                wavelength[0] + bin_width * np.arange(-pad, 0),
-                wavelength,
-                wavelength[-1] + bin_width * np.arange(1, pad + 1),
-            ]
-        )
+        wave_ext = np.concatenate([wave_pad_left, wavelength, wave_pad_right])
     else:
         raise ValueError(f"Unsupported edge_handling: {edge_handling}")
+
+    # Ensure flux_ext and wave_ext have the same length
+    assert len(flux_ext) == len(
+        wave_ext
+    ), f"flux_ext ({len(flux_ext)}) and wave_ext ({len(wave_ext)}) have different lengths"
 
     # Prepare output array - use normalized flux (1)
     broadened_flux = []
@@ -397,12 +399,19 @@ def macroturbulence_broaden_chunks(
 
         # maximum wavelength shift at midpoint of chunk
         delta_lambda_L = lambda_mid * vc
-        ext_width = delta_lambda_L  # extend beyond chunk by ~kernel width
+        ext_width = 2.5 * delta_lambda_L  # extend beyond chunk by ~kernel width
 
-        chunk_mask = (wave_ext >= L0) & (wave_ext < L1)
-        chunk_ext_mask = (wave_ext >= L0 - ext_width) & (wave_ext < L1 + ext_width)
+        # Get indices for chunk and extended chunk using direct index lookup
+        chunk_idx = np.where((wave_ext >= L0) & (wave_ext < L1))[0]
+        chunk_ext_idx = np.where(
+            (wave_ext >= L0 - ext_width) & (wave_ext < L1 + ext_width)
+        )[0]
 
-        flux_chunk_ext = flux_ext[chunk_ext_mask]
+        if len(chunk_ext_idx) == 0:
+            # No overlap, skip this chunk
+            continue
+
+        flux_chunk_ext = flux_ext[chunk_ext_idx]
 
         # Define convolution kernel
         N = int(np.floor(1.5 * delta_lambda_L / bin_width))
@@ -414,11 +423,14 @@ def macroturbulence_broaden_chunks(
         convolved_one = np.convolve(np.ones_like(flux_chunk_ext), kernel, mode="same")
         norm_flux = convolved_flux / convolved_one
 
-        # Cut back to inner chunk region
-        idx_in_chunk = np.where(chunk_mask & chunk_ext_mask)[0]
-        idx_start = idx_in_chunk[0] - np.where(chunk_ext_mask)[0][0]
-        idx_end = idx_in_chunk[-1] - np.where(chunk_ext_mask)[0][0] + 1
-        broadened_flux.extend(norm_flux[idx_start:idx_end])
+        # Cut back to inner chunk region by finding which indices from chunk_ext_idx
+        # overlap with chunk_idx
+        # Find the position of chunk_idx elements within chunk_ext_idx
+        mask_in_ext = np.isin(chunk_ext_idx, chunk_idx)
+        if np.any(mask_in_ext):
+            first_idx_pos = np.where(mask_in_ext)[0][0]
+            last_idx_pos = np.where(mask_in_ext)[0][-1] + 1
+            broadened_flux.extend(norm_flux[first_idx_pos:last_idx_pos])
 
     broadened_flux = np.array(broadened_flux)
     if len(broadened_flux) < len(wavelength):
