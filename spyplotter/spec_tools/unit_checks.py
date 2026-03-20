@@ -85,6 +85,40 @@ def check_distance_unit(d):
         raise ValueError
 
 
+def check_T_unit(T):
+    if isinstance(
+        T, (u.quantity.Quantity, SpectralCoord, SpectralQuantity)
+    ) and T.unit.is_equivalent(u.K):
+        logger.debug(f"Use given temperature unit: {T.unit}")
+        return T.to(u.K)
+
+    elif isinstance(T, (float, int)):
+        logger.info("No unit for temperature specified. Thus assuming Kelvin.")
+        return T * u.K
+    else:
+        logger.error(
+            "Not known format for temperature used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity of unit equivalent to K"
+        )
+        raise ValueError
+
+
+def check_column_density_unit(n):
+    if isinstance(
+        n, (u.quantity.Quantity, SpectralCoord, SpectralQuantity)
+    ) and n.unit.is_equivalent(1 / (u.cm**2)):
+        logger.debug(f"Use given temperature unit: {n.unit}")
+        return n.to(1 / (u.cm**2))
+
+    elif isinstance(n, (float, int)):
+        logger.info("No unit for temperature specified. Thus assuming cm^2.")
+        return n / (u.cm**2)
+    else:
+        logger.error(
+            "Not known format for column density used. Convert to float or astropy classes Quantity, SpectralCoord or SpectralQuantity of unit equivalent to cm^-2"
+        )
+        raise ValueError
+
+
 def doppler_shifted_x(x, vrad):
     # Check and set units of vrad
     vrad = check_velocity_unit(vrad)

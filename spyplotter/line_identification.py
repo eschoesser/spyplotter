@@ -164,20 +164,18 @@ class SpectralLine:
         }
 
 
-class ISMLine(SpectralLine):
-    """Class for ISM lines, which are not shifted by radial velocity"""
-
-    def __init__(self, ion_name, wavelengths, plotting_style_dict={}, x_unit=u.AA):
-        super().__init__(
-            ion_name, wavelengths, plotting_style_dict, x_unit, vrad=0 * u.km / u.s
-        )
-
-    # use voigt or Lorentz profile for ISM lines depending on input params given
-
-
 class LineIdentifier:
     # TODO: add units, possibility for unit adaptions,make sure it works even if entries of dict_lines have different units
     def __init__(self, spectral_lines={}, x_unit=None, vrad=0 * u.km / u.s):
+        """_summary_
+
+        :param spectral_lines: dictionary, defaults to {}
+        :type spectral_lines: dict, optional
+        :param x_unit: _description_, defaults to None
+        :type x_unit: _type_, optional
+        :param vrad: _description_, defaults to 0*u.km/u.s
+        :type vrad: _type_, optional
+        """
         # have_all_units = all(isinstance(value, (u.quantity.Quantity,SpectralCoord,SpectralQuantity)) for value in dict_lines.values())
 
         if x_unit == None:
@@ -296,11 +294,11 @@ class LineIdentifier:
         return self.wavelengths
 
     @classmethod
-    def from_yaml(cls, file_path, x_unit=u.AA):
+    def from_yaml(cls, file_path, x_unit=u.AA, vrad=0 * u.km / u.s):
         # Read Line Identification class from yaml file
         with open(file_path, "r") as yaml_file:
             spectral_lines_dict = yaml.load(yaml_file, Loader=yaml.FullLoader)
-        return cls.from_dict(spectral_lines_dict, x_unit=x_unit)
+        return cls.from_dict(spectral_lines_dict, x_unit=x_unit, vrad=vrad)
 
     def to_yaml(self, file_path):
         # Write dictionary to yaml file
@@ -308,7 +306,7 @@ class LineIdentifier:
             yaml.dump(self.to_dict(), yaml_file, default_flow_style=False)
 
     @classmethod
-    def from_dict(cls, spectral_lines_dict, x_unit=u.AA):
+    def from_dict(cls, spectral_lines_dict, x_unit=u.AA, vrad=0 * u.km / u.s):
         # Create dictionary of SpectralLine type from dictionary of dictionaries
         spectral_lines = {}
         for ion, line in spectral_lines_dict.items():
@@ -339,7 +337,7 @@ class LineIdentifier:
                     {ion: SpectralLine(ion_name=ion, wavelengths=line, x_unit=x_unit)}
                 )
 
-        return cls(spectral_lines, x_unit)
+        return cls(spectral_lines, x_unit, vrad)
 
     def to_dict(self):
         # Convert all SpectralLine objects to dictionary
