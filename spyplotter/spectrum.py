@@ -300,9 +300,12 @@ class Spectrum(object):
             elif (path / "formal.plot").exists():
                 logger.info("Reading formal.plot")
                 x, y = readWRPlotDatasets(path / "formal.plot", keywords, dataset)
+            else:
+                msg = f"Path ({path}) is a directory but formal.plot does not exist in this directory. Specify path to *.plot file or path to file containing formal.plot."
+                raise FileNotFoundError(msg)
         else:
-            logger.error(f"Path ({path}) does not exist")
-            raise ValueError
+            msg = f"Path ({path}) does not exist. Specify path to *.plot file or path to file containing formal.plot."
+            raise FileNotFoundError(msg)
 
         if y_unit is None:
             # search for signs of a flux calibrated spectrum, otherwise assume normalized spectrum
@@ -360,8 +363,8 @@ class Spectrum(object):
         if path.exists():
             data = np.loadtxt(filename, **kwargs)
         else:
-            logger.error(f"Path ({path}) does not exist")
-            raise ValueError
+            msg = f"Path ({path}) does not exist"
+            raise FileNotFoundError(msg)
 
         if len(data[0]) == 2:
             yerr = None
@@ -428,8 +431,8 @@ class Spectrum(object):
             fitsf = fits.open(path, ignore_missing_simple=True)
 
         else:
-            logger.error(f"Path ({path}) does not exist")
-            raise ValueError
+            msg = f"Path ({path}) does not exist"
+            raise FileNotFoundError(msg)
 
         data = fitsf[1].data
         n_datasets = len(data)
@@ -521,8 +524,8 @@ class Spectrum(object):
             table = Table.read(path, format="votable")
 
         else:
-            logger.error(f"Path ({path}) does not exist")
-            raise ValueError
+            msg = f"Path ({path}) does not exist"
+            raise FileNotFoundError(msg)
 
         freq = table["sed_freq"].data * u.GHz
         flux = table["sed_flux"].data * u.Jy
